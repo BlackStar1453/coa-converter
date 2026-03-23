@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COA Converter Web</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>COA Converter Web</h1>
+
+  <!-- Upload -->
+  <div class="card">
+    <h2>Upload PDF</h2>
+    <div class="upload-zone" id="dropZone">
+      <span class="icon">+</span>
+      <span>Drop PDF files here or click to select</span>
+      <input type="file" id="fileInput" accept=".pdf" multiple>
+    </div>
+    <ul class="file-list" id="fileList"></ul>
+  </div>
+
+  <!-- Controls -->
+  <div class="card">
+    <h2>Settings</h2>
+    <div class="controls">
+      <select id="templateSelect">
+        <option value="">Loading templates...</option>
+      </select>
+      <label>
+        <input type="checkbox" id="forceVerify" checked>
+        Force AI Verify
+      </label>
+      <select id="claudeMode">
+        <option value="silent">Silent (result in page)</option>
+        <option value="interactive">Interactive (open terminal)</option>
+      </select>
+      <button class="btn btn-primary" id="btnConvertAll" disabled>Convert All</button>
+    </div>
+  </div>
+
+  <!-- Job Queue -->
+  <div class="card">
+    <h2>Jobs</h2>
+    <div id="jobContainer">
+      <div class="empty-state">No jobs yet. Upload PDF files to start.</div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

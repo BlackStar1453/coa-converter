@@ -1,0 +1,246 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  background: #f5f5f7;
+  color: #1d1d1f;
+  line-height: 1.5;
+  padding: 24px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 24px;
+  color: #1d1d1f;
+}
+
+/* Card */
+.card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.card h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #86868b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+/* Upload zone */
+.upload-zone {
+  border: 2px dashed #d2d2d7;
+  border-radius: 10px;
+  padding: 32px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #86868b;
+  font-size: 15px;
+}
+
+.upload-zone:hover,
+.upload-zone.dragover {
+  border-color: #0071e3;
+  background: #f0f7ff;
+  color: #0071e3;
+}
+
+.upload-zone input[type="file"] {
+  display: none;
+}
+
+.upload-zone .icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+/* Controls row */
+.controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.controls select {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid #d2d2d7;
+  border-radius: 8px;
+  font-size: 14px;
+  background: #fff;
+  color: #1d1d1f;
+  appearance: auto;
+}
+
+.controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #86868b;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.controls label input[type="checkbox"] {
+  accent-color: #0071e3;
+}
+
+/* Buttons */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #0071e3;
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #0077ed;
+}
+
+.btn-secondary {
+  background: #e8e8ed;
+  color: #1d1d1f;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #d2d2d7;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+/* Job table */
+.job-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.job-table th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e8e8ed;
+  color: #86868b;
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.job-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f5f5f7;
+  vertical-align: middle;
+}
+
+.job-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Status badges */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.badge-pending { background: #e8e8ed; color: #86868b; }
+.badge-converting { background: #e3f0ff; color: #0071e3; }
+.badge-verifying { background: #fff3e0; color: #e65100; }
+.badge-done { background: #e8f5e9; color: #2e7d32; }
+.badge-error { background: #ffeef0; color: #d32f2f; }
+
+/* Actions cell */
+.actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 32px;
+  color: #86868b;
+  font-size: 14px;
+}
+
+/* File list (uploaded, pending) */
+.file-list {
+  list-style: none;
+  margin-top: 8px;
+}
+
+.file-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 14px;
+  color: #1d1d1f;
+}
+
+.file-list li .remove {
+  color: #d2d2d7;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.file-list li .remove:hover {
+  color: #d32f2f;
+}
+
+/* Error text */
+.error-text {
+  color: #d32f2f;
+  font-size: 12px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error-text:hover {
+  white-space: normal;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  body { padding: 12px; }
+  .controls { flex-direction: column; }
+  .controls select { min-width: 100%; }
+}

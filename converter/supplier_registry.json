@@ -1,0 +1,52 @@
+{
+  "_description": "已验证供应商注册表 — 记录已通过 AI 验证的供应商签名，后续同供应商 PDF 可跳过 AI 验证",
+  "suppliers": [
+    {
+      "id": "lipond",
+      "name": "Lipond",
+      "signatures": [
+        "lipond",
+        "2061 south lynx place",
+        "www.lipond.net"
+      ],
+      "format": "lined_table",
+      "verified_date": "2026-02-28",
+      "verified_pdfs": [
+        "COA_Rhodiola Rosea P.E. 10-1_RE25030845.pdf"
+      ],
+      "accuracy": "100%",
+      "notes": "有线表格PDF，4列结构(Item/Spec/Result/Method)，头部4区域key-value布局"
+    },
+    {
+      "id": "hcare",
+      "name": "HCare / HCFM",
+      "signatures": [
+        "hcfm",
+        "hcare",
+        "HCFMOPDX"
+      ],
+      "format": "text_based",
+      "verified_date": "2026-02-28",
+      "verified_pdfs": [
+        "moringa powder batch 03-1.pdf"
+      ],
+      "accuracy": "100%",
+      "notes": "无线表格PDF，需words策略降级提取，头部key-value从全文正则匹配"
+    },
+    {
+      "id": "hanzhong_trg",
+      "name": "Hanzhong TRG Biotech Co., Ltd.",
+      "signatures": [
+        "HANZHONG TRG BIOTECH",
+        "www.trgbio.com"
+      ],
+      "format": "lined_table",
+      "verified_date": "2026-03-23",
+      "verified_pdfs": [
+        "Turmeric Extract Curcumin 95% TEC25072395_1.pdf"
+      ],
+      "accuracy": "100%",
+      "notes": "Chinese supplier, lined table format with Chemical Physical Control and Microbiology Control sections"
+    }
+  ]
+}
