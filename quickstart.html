@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>COA Converter Web — 快速开始</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 40px 20px; }
+  .container { max-width: 680px; margin: 0 auto; }
+  h1 { text-align: center; font-size: 28px; font-weight: 600; margin-bottom: 8px; }
+  .subtitle { text-align: center; color: #86868b; font-size: 15px; margin-bottom: 48px; }
+
+  .step { display: flex; gap: 20px; margin-bottom: 12px; }
+  .step-num { flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; background: #0071e3; color: #fff; font-size: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center; margin-top: 14px; }
+  .step-body { flex: 1; background: #fff; border-radius: 14px; padding: 18px 22px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .step-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .step-desc { font-size: 14px; color: #515154; line-height: 1.5; }
+  code { background: #f0f0f0; padding: 2px 8px; border-radius: 5px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; color: #1d1d1f; }
+  .cmd { display: block; background: #1d1d1f; color: #34c759; padding: 10px 14px; border-radius: 8px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; margin-top: 8px; line-height: 1.6; white-space: pre; overflow-x: auto; }
+
+  .arrow { display: flex; justify-content: center; padding: 4px 0; }
+  .arrow svg { width: 20px; height: 20px; fill: #86868b; }
+
+  .done { margin-top: 36px; text-align: center; background: #fff; border-radius: 14px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .done-icon { font-size: 40px; margin-bottom: 10px; }
+  .done-title { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+  .done-desc { font-size: 14px; color: #515154; line-height: 1.6; }
+  .url { display: inline-block; background: #0071e3; color: #fff; padding: 6px 16px; border-radius: 8px; font-family: "SF Mono", Menlo, monospace; font-size: 14px; margin-top: 10px; text-decoration: none; }
+
+  .share { margin-top: 20px; display: flex; gap: 16px; justify-content: center; align-items: center; }
+  .share-box { background: #fff; border-radius: 14px; padding: 18px 24px; box-shadow: 0 1px 3px rgba(0,0,0,.08); text-align: center; flex: 1; max-width: 200px; }
+  .share-label { font-size: 12px; color: #86868b; margin-bottom: 4px; }
+  .share-val { font-size: 14px; font-weight: 500; }
+  .share-arrow { color: #86868b; font-size: 22px; }
+
+  .notice { margin-top: 28px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 0 14px 14px 0; padding: 18px 22px; }
+  .notice-title { font-size: 15px; font-weight: 600; color: #e65100; margin-bottom: 6px; }
+  .notice-desc { font-size: 14px; color: #515154; line-height: 1.6; }
+
+  .section { margin-top: 36px; }
+  .section-title { font-size: 20px; font-weight: 600; text-align: center; margin-bottom: 20px; }
+
+  .option { background: #fff; border-radius: 14px; padding: 22px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px; }
+  .option-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 10px; margin-bottom: 8px; }
+  .badge-rec { background: #e8f5e9; color: #2e7d32; }
+  .badge-manual { background: #e3f2fd; color: #1565c0; }
+  .option-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .option-desc { font-size: 14px; color: #515154; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>COA Converter Web</h1>
+  <p class="subtitle">从零开始，两分钟完成安装</p>
+
+  <!-- Step 1 -->
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <div class="step-title">打开终端</div>
+      <div class="step-desc">在 Mac 上按 <code>⌘ Space</code> 搜索 <code>Terminal</code> 并打开</div>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 20 20"><path d="M10 4v10m0 0l-4-4m4 4l4-4" stroke="#86868b" stroke-width="2" fill="none" stroke-linecap="round"/></svg></div>
+
+  <!-- Step 2 -->
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <div class="step-title">克隆项目</div>
+      <div class="step-desc">复制下面的命令粘贴到终端，按回车</div>
+      <div class="cmd">git clone https://github.com/BlackStar1453/coa-converter.git
+cd coa-converter</div>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 20 20"><path d="M10 4v10m0 0l-4-4m4 4l4-4" stroke="#86868b" stroke-width="2" fill="none" stroke-linecap="round"/></svg></div>
+
+  <!-- Step 3 -->
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <div class="step-title">一键安装</div>
+      <div class="step-desc">自动安装所有依赖（首次可能需要输入电脑密码）</div>
+      <div class="cmd">bash install.sh</div>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 20 20"><path d="M10 4v10m0 0l-4-4m4 4l4-4" stroke="#86868b" stroke-width="2" fill="none" stroke-linecap="round"/></svg></div>
+
+  <!-- Step 4 -->
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <div class="step-title">启动服务</div>
+      <div class="step-desc">启动后浏览器会自动打开，终端会显示局域网地址</div>
+      <div class="cmd">bash run.sh</div>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 20 20"><path d="M10 4v10m0 0l-4-4m4 4l4-4" stroke="#86868b" stroke-width="2" fill="none" stroke-linecap="round"/></svg></div>
+
+  <!-- Done -->
+  <div class="done">
+    <div class="done-icon">&#10003;</div>
+    <div class="done-title">安装完成</div>
+    <div class="done-desc">
+      在浏览器中上传 COA PDF，选择模板，点击转换<br>
+      将下方局域网地址发给同事，他们也能直接使用
+    </div>
+    <div style="margin-top: 20px;">
+      <div class="share">
+        <div class="share-box">
+          <div class="share-label">本机</div>
+          <div class="share-val">http://127.0.0.1:5050</div>
+        </div>
+        <div class="share-arrow">→</div>
+        <div class="share-box">
+          <div class="share-label">局域网（发给同事）</div>
+          <div class="share-val">http://你的IP:5050</div>
+        </div>
+      </div>
+      <p style="font-size:12px; color:#86868b; margin-top:12px;">局域网地址在终端启动时会显示，确保设备在同一 Wi-Fi 下</p>
+    </div>
+  </div>
+
+  <!-- Notice -->
+  <div class="notice">
+    <div class="notice-title">&#9888;&#65039; 重要提醒</div>
+    <div class="notice-desc">
+      网站运行在你的 Mac Air 上，<strong>只有电脑开机且服务运行时</strong>，你和同事才能访问。<br>
+      电脑关机、合盖休眠、或终端关闭后，网站将无法使用。
+    </div>
+  </div>
+
+  <!-- Next time -->
+  <div class="section">
+    <div class="section-title">下次使用</div>
+
+    <div class="option">
+      <div class="option-badge badge-rec">推荐</div>
+      <div class="option-title">开机自启 — 打开电脑就能用</div>
+      <div class="option-desc">
+        运行一次下面的命令，以后每次开机服务会自动启动，无需任何手动操作。
+      </div>
+      <div class="cmd">bash autostart.sh enable</div>
+      <div class="option-desc" style="margin-top:10px; font-size:13px; color:#86868b;">
+        关闭自启：<code>bash autostart.sh disable</code> &nbsp;|&nbsp; 查看状态：<code>bash autostart.sh status</code>
+      </div>
+    </div>
+
+    <div class="option">
+      <div class="option-badge badge-manual">手动启动</div>
+      <div class="option-title">每次手动运行</div>
+      <div class="option-desc">如果不想自启，每次需要使用时打开终端运行：</div>
+      <div class="cmd">cd coa-converter && bash run.sh</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
