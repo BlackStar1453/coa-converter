@@ -20,10 +20,13 @@ bash install.sh
 ```
 
 安装脚本会自动完成：
-- 检查 Python 3 环境
+- 安装 Homebrew（如未安装，仅 macOS）
+- 安装 Python 3（如未安装，通过 Homebrew / apt）
 - 创建虚拟环境（`.venv/`）并安装依赖
 - 创建 `input/` 和 `output/` 工作目录
-- 安装 Claude Code Skill 到 `~/.claude/commands/`
+- 安装 Claude Code Skills（`/coa-to-template` + `/coa-fix-output`）到 `~/.claude/commands/`
+
+> 全新 Mac 也能直接运行，无需提前安装任何工具。安装过程中可能需要输入电脑密码。
 
 ### 3. 放置模板文件
 
@@ -63,6 +66,16 @@ bash run.sh
 
 Skill 会自动完成：PDF 数据提取 → 模板填充 → AI 验证 → 错误修复 → 供应商注册。
 
+如果转换结果有误，使用修复 Skill：
+```
+/coa-fix-output <错误描述>
+```
+
+示例：
+```
+/coa-fix-output Lot No. 填到了 Mfg. Date 的位置
+```
+
 ## 项目结构
 
 ```
@@ -90,9 +103,9 @@ coa-converter-web/
 
 ## 环境要求
 
-- Python 3.8+
 - macOS / Linux（Windows 需使用 PowerShell）
 - Claude Code（仅使用 Skill 方式时需要）
+- Python 3 和 Homebrew 会在安装时自动安装（如缺失）
 
 ## 常见问题
 
