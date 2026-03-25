@@ -2,6 +2,7 @@
 
 import os
 import shlex
+import shutil
 import subprocess
 import threading
 import time
@@ -9,8 +10,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_CLI = os.path.expanduser('~/.local/bin/claude')
 MARKER_DIR = '/tmp'
+
+
+def _find_claude_cli():
+    """Find Claude CLI binary from known paths or PATH."""
+    candidates = [
+        os.path.expanduser('~/.local/bin/claude'),
+        os.path.expanduser('~/.claude/local/claude'),
+        '/usr/local/bin/claude',
+        os.path.expanduser('~/.npm-global/bin/claude'),
+    ]
+    for path in candidates:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    found = shutil.which('claude')
+    if found:
+        return found
+    return None
+
+
+CLAUDE_CLI = os.environ.get('CLAUDE_CLI_PATH') or _find_claude_cli()
 
 
 def _escape_for_applescript(s: str) -> str:
@@ -21,6 +41,12 @@ def _escape_for_applescript(s: str) -> str:
 def launch_verification(job_manager, job_id: str, pdf_path: str,
                         template_path: str, output_path: str):
     """Open Terminal.app running Claude Code for COA verification."""
+    if not CLAUDE_CLI:
+        logger.error('Claude CLI not found')
+        job_manager.update_job(job_id, status='error',
+                               error='Claude CLI not found. Install Claude Code CLI or disable AI verification.')
+        return
+
     marker_file = os.path.join(MARKER_DIR, f'coa-verify-{job_id}.done')
 
     # Remove stale marker
@@ -42,7 +68,7 @@ echo "PDF: {pdf_path}"
 echo "Template: {os.path.basename(template_path)}"
 echo "Output: {output_path}"
 echo "---"
-{CLAUDE_CLI} --dangerously-skip-permissions -p "/coa-to-template {pdf_q} {tpl_q} {out_q}"
+{CLAUDE_CLI} --dangerously-skip-permissions "/coa-to-template {pdf_q} {tpl_q} {out_q}"
 echo "done" > {marker_q}
 echo "=== Verification complete. You can close this window. ==="
 """
@@ -108,12 +134,14 @@ def _start_marker_poll(job_manager, job_id: str, marker_file: str):
 def launch_verification_silent(job_manager, job_id: str, pdf_path: str,
                                template_path: str, output_path: str):
     """Run Claude Code silently with -p flag and capture output."""
-    import shlex
+    if not CLAUDE_CLI:
+        logger.error('Claude CLI not found')
+        job_manager.update_job(job_id, status='error',
+                               error='Claude CLI not found. Install Claude Code CLI or disable AI verification.')
+        return
 
-    pdf_q = shlex.quote(pdf_path)
-    tpl_q = shlex.quote(template_path)
-    out_q = shlex.quote(output_path)
-    prompt = f"/coa-to-template {pdf_q} {tpl_q} {out_q}"
+    # No shlex.quote() here — subprocess.run() passes args directly, not via shell
+    prompt = f"/coa-to-template {pdf_path} {template_path} {output_path}"
 
     def _run():
         try:

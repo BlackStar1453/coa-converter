@@ -51,12 +51,7 @@ def run_conversion(job_manager, job_id: str, pdf_path: str,
             else:
                 job_manager.update_job(job_id, status='done')
 
-            # Clean up uploaded PDF to avoid storage bloat
-            try:
-                if os.path.exists(pdf_path):
-                    os.remove(pdf_path)
-            except OSError:
-                pass
+            # Keep input PDF for re-verification and multi-template conversion
 
         except Exception as e:
             logger.error(f'Conversion failed for job {job_id}: {e}')

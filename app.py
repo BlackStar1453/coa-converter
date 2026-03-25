@@ -97,8 +97,15 @@ def _parse_multipart(handler) -> dict:
     return {'files': files, 'fields': fields}
 
 
+_LOCALHOST_IPS = {'127.0.0.1', '::1'}
+
+
 class COAHandler(SimpleHTTPRequestHandler):
     """HTTP handler with API routes and static file serving."""
+
+    def _is_local(self) -> bool:
+        """Return True if the request comes from localhost."""
+        return self.client_address[0] in _LOCALHOST_IPS
 
     def log_message(self, format, *args):
         logger.info(f'{self.address_string()} - {format % args}')
@@ -122,6 +129,8 @@ class COAHandler(SimpleHTTPRequestHandler):
         elif path.startswith('/api/jobs/'):
             job_id = path.split('/api/jobs/')[1]
             self._handle_get_job(job_id)
+        elif path == '/api/client-info':
+            _json_response(self, {'is_local': self._is_local()})
         elif path.startswith('/api/download/'):
             job_id = path.split('/api/download/')[1]
             self._handle_download(job_id)
@@ -257,6 +266,8 @@ class COAHandler(SimpleHTTPRequestHandler):
             counter += 1
 
         claude_mode = params.get('claude_mode', 'silent')
+        if not self._is_local():
+            claude_mode = 'silent'
 
         jobs.update_job(job_id, template_name=template_name,
                         template_path=template_path,
@@ -280,38 +291,56 @@ class COAHandler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             params = {}
 
-        template_path = params.get('template_path')
+        # Support both array (template_paths) and single (template_path)
+        template_paths = params.get('template_paths', [])
+        if not template_paths:
+            tp = params.get('template_path')
+            if tp:
+                template_paths = [tp]
+        if not template_paths:
+            _json_response(self, {'error': 'template_paths required'}, 400)
+            return
+
         force_verify = params.get('force_verify', False)
         claude_mode = params.get('claude_mode', 'silent')
-
-        if not template_path:
-            _json_response(self, {'error': 'template_path required'}, 400)
-            return
+        if not self._is_local():
+            claude_mode = 'silent'
 
         pending = jobs.get_pending_jobs()
         if not pending:
             _json_response(self, {'error': 'No pending jobs'}, 400)
             return
 
+        # Build (job_id, pdf_path, template_path) work items
+        work_items = []
+        for job in pending:
+            for i, tpl_path in enumerate(template_paths):
+                if i == 0:
+                    work_items.append((job['id'], job['pdf_path'], tpl_path))
+                else:
+                    new_job = jobs.create_job(pdf_name=job['pdf_name'],
+                                              pdf_path=job['pdf_path'])
+                    work_items.append((new_job['id'], job['pdf_path'], tpl_path))
+
         def _batch():
             with _batch_lock:
-                for job in pending:
-                    jid = job['id']
-                    template_name = os.path.basename(template_path)
-                    ext = os.path.splitext(template_path)[1]
-                    pdf_stem = Path(job['pdf_path']).stem
-                    output_path = str(OUTPUT_DIR / f'{pdf_stem}{ext}')
+                threads = []
+                for jid, pdf_path, tpl_path in work_items:
+                    template_name = os.path.basename(tpl_path)
+                    tpl_stem = Path(template_name).stem
+                    ext = os.path.splitext(tpl_path)[1]
+                    pdf_stem = Path(pdf_path).stem
+                    output_path = str(OUTPUT_DIR / f'{pdf_stem}_{tpl_stem}{ext}')
                     counter = 1
                     while os.path.exists(output_path):
-                        output_path = str(OUTPUT_DIR / f'{pdf_stem}_{counter}{ext}')
+                        output_path = str(OUTPUT_DIR / f'{pdf_stem}_{tpl_stem}_{counter}{ext}')
                         counter += 1
 
                     jobs.update_job(jid, template_name=template_name,
-                                    template_path=template_path,
+                                    template_path=tpl_path,
                                     force_verify=force_verify)
 
-                    def on_verify(j=jid, p=job['pdf_path'],
-                                  t=template_path, o=output_path):
+                    def on_verify(j=jid, p=pdf_path, t=tpl_path, o=output_path):
                         def _cb(_jid, _pdf, _tpl, _out):
                             if claude_mode == 'interactive':
                                 launch_verification(jobs, j, p, t, o)
@@ -319,13 +348,16 @@ class COAHandler(SimpleHTTPRequestHandler):
                                 launch_verification_silent(jobs, j, p, t, o)
                         return _cb
 
-                    t = run_conversion(jobs, jid, job['pdf_path'],
-                                       template_path, output_path,
-                                       on_complete=on_verify())
-                    t.join()  # Sequential processing
+                    t = run_conversion(jobs, jid, pdf_path, tpl_path,
+                                       output_path, on_complete=on_verify())
+                    threads.append(t)
+
+                # Wait for all conversions (parallel, not sequential)
+                for t in threads:
+                    t.join()
 
         threading.Thread(target=_batch, daemon=True).start()
-        _json_response(self, {'ok': True, 'count': len(pending)})
+        _json_response(self, {'ok': True, 'count': len(work_items)})
 
     def _handle_verify(self, job_id):
         body = _read_body(self)
@@ -334,6 +366,8 @@ class COAHandler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             params = {}
         claude_mode = params.get('claude_mode', 'silent')
+        if not self._is_local():
+            claude_mode = 'silent'
 
         job = jobs.get_job(job_id)
         if not job:

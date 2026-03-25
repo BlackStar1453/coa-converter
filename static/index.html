@@ -24,9 +24,12 @@
   <div class="card">
     <h2>Settings</h2>
     <div class="controls">
-      <select id="templateSelect">
-        <option value="">Loading templates...</option>
-      </select>
+      <div id="templateSelect" class="template-checklist">
+        <label class="template-check-all">
+          <input type="checkbox" id="templateSelectAll"> Select All
+        </label>
+        <div id="templateList">Loading templates...</div>
+      </div>
       <label>
         <input type="checkbox" id="forceVerify" checked>
         Force AI Verify

@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupUpload();
   setupButtons();
   startPolling();
+  checkClientInfo();
 });
 
 // --- Templates ---
@@ -17,17 +18,26 @@ async function loadTemplates() {
   try {
     const res = await fetch(`${API}/api/templates`);
     templates = await res.json();
-    const sel = document.getElementById('templateSelect');
-    sel.innerHTML = '<option value="">-- Select Template --</option>';
+    const list = document.getElementById('templateList');
+    list.innerHTML = '';
     templates.forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t.path;
-      opt.textContent = `${t.name} (${t.format})`;
-      sel.appendChild(opt);
+      const lbl = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = t.path;
+      cb.className = 'template-cb';
+      cb.addEventListener('change', updateConvertButton);
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(` ${t.name} (${t.format})`));
+      list.appendChild(lbl);
     });
   } catch (e) {
     console.error('Failed to load templates:', e);
   }
+}
+
+function getSelectedTemplates() {
+  return Array.from(document.querySelectorAll('.template-cb:checked')).map(cb => cb.value);
 }
 
 // --- Upload ---
@@ -90,21 +100,38 @@ async function uploadFiles(fileList) {
 // --- Buttons ---
 function setupButtons() {
   document.getElementById('btnConvertAll').addEventListener('click', convertAll);
-  document.getElementById('templateSelect').addEventListener('change', updateConvertButton);
+  document.getElementById('templateSelectAll').addEventListener('change', (e) => {
+    document.querySelectorAll('.template-cb').forEach(cb => cb.checked = e.target.checked);
+    updateConvertButton();
+  });
 }
 
 function updateConvertButton() {
-  const tpl = document.getElementById('templateSelect').value;
-  document.getElementById('btnConvertAll').disabled = !tpl;
+  document.getElementById('btnConvertAll').disabled = getSelectedTemplates().length === 0;
 }
 
 function getClaudeMode() {
   return document.getElementById('claudeMode').value;
 }
 
+async function checkClientInfo() {
+  try {
+    const res = await fetch(`${API}/api/client-info`);
+    const info = await res.json();
+    if (!info.is_local) {
+      const sel = document.getElementById('claudeMode');
+      sel.value = 'silent';
+      sel.disabled = true;
+      sel.title = 'Interactive mode is only available on the local machine';
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
 async function convertAll() {
-  const tpl = document.getElementById('templateSelect').value;
-  if (!tpl) return;
+  const tpls = getSelectedTemplates();
+  if (!tpls.length) return;
 
   const force = document.getElementById('forceVerify').checked;
 
@@ -112,7 +139,7 @@ async function convertAll() {
     const res = await fetch(`${API}/api/convert-all`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_path: tpl, force_verify: force, claude_mode: getClaudeMode() }),
+      body: JSON.stringify({ template_paths: tpls, force_verify: force, claude_mode: getClaudeMode() }),
     });
     const data = await res.json();
     if (!res.ok) alert(data.error || 'Convert failed');
@@ -123,8 +150,8 @@ async function convertAll() {
 }
 
 async function convertOne(jobId) {
-  const tpl = document.getElementById('templateSelect').value;
-  if (!tpl) { alert('Please select a template first'); return; }
+  const tpls = getSelectedTemplates();
+  if (!tpls.length) { alert('Please select at least one template'); return; }
 
   const force = document.getElementById('forceVerify').checked;
 
@@ -132,7 +159,7 @@ async function convertOne(jobId) {
     const res = await fetch(`${API}/api/convert/${jobId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_path: tpl, force_verify: force, claude_mode: getClaudeMode() }),
+      body: JSON.stringify({ template_path: tpls[0], force_verify: force, claude_mode: getClaudeMode() }),
     });
     const data = await res.json();
     if (!res.ok) alert(data.error || 'Convert failed');
@@ -232,11 +259,14 @@ function renderJobs(jobList) {
         actions = '<span style="color:#86868b;font-size:12px">AI verifying...</span>';
       }
     } else if (status === 'done') {
-      actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}">Download</a>`;
+      actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
       actions += ` <button class="btn btn-secondary btn-sm" onclick="verifyJob('${job.id}')">Re-verify</button>`;
       actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
     } else if (status === 'error') {
       actions = `<span class="error-text" title="${(job.error || '').replace(/"/g, '&quot;')}">${job.error || 'Unknown error'}</span>`;
+      if (job.output_path) {
+        actions += ` <a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
+      }
       actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
     }
 
