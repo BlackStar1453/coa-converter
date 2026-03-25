@@ -227,9 +227,19 @@ async function focusTerminal() {
   }
 }
 
-async function deleteJob(jobId) {
+async function cancelJob(jobId) {
   try {
-    await fetch(`${API}/api/jobs/${jobId}`, { method: 'DELETE' });
+    await fetch(`${API}/api/cancel/${jobId}`, { method: 'PUT' });
+    refreshJobs();
+  } catch (e) {
+    // ignore
+  }
+}
+
+async function removeJob(jobId) {
+  if (!confirm('Remove this job and delete associated files?')) return;
+  try {
+    await fetch(`${API}/api/remove/${jobId}`, { method: 'PUT' });
     refreshJobs();
   } catch (e) {
     // ignore
@@ -283,15 +293,19 @@ function renderJobs(jobList) {
     }[status] || status;
 
     let actions = '';
+    const cancelBtn = ` <button class="btn btn-secondary btn-sm" onclick="cancelJob('${job.id}')" title="Cancel">Cancel</button>`;
+    const removeBtn = ` <button class="btn btn-danger btn-sm" onclick="removeJob('${job.id}')" title="Remove job and files">Remove</button>`;
+
     if (status === 'pending') {
       actions = `<button class="btn btn-primary btn-sm" onclick="convertOne('${job.id}')">Convert</button>`;
-      actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
+      actions += removeBtn;
     } else if (status === 'converting') {
       actions = '<span style="color:#86868b;font-size:12px">Processing...</span>';
+      actions += cancelBtn;
     } else if (status === 'converted') {
       actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
       actions += ` <button class="btn btn-secondary btn-sm" onclick="verifyJob('${job.id}')">Verify</button>`;
-      actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
+      actions += cancelBtn + removeBtn;
     } else if (status === 'verifying') {
       actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
       if (isLocal && getClaudeMode() === 'interactive') {
@@ -299,18 +313,19 @@ function renderJobs(jobList) {
       } else {
         actions += ' <span style="color:#86868b;font-size:12px">AI verifying...</span>';
       }
+      actions += cancelBtn;
     } else if (status === 'done') {
       actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
       actions += ` <button class="btn btn-warning btn-sm" onclick="reportError('${job.id}')">Report Error</button>`;
       actions += ` <button class="btn btn-secondary btn-sm" onclick="verifyJob('${job.id}')">Re-verify</button>`;
-      actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
+      actions += cancelBtn + removeBtn;
     } else if (status === 'error') {
       actions = `<span class="error-text" title="${(job.error || '').replace(/"/g, '&quot;')}">${job.error || 'Unknown error'}</span>`;
       if (job.output_path) {
         actions += ` <a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
         actions += ` <button class="btn btn-warning btn-sm" onclick="reportError('${job.id}')">Report Error</button>`;
       }
-      actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
+      actions += cancelBtn + removeBtn;
     }
 
     let aiRow = '';

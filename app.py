@@ -172,6 +172,18 @@ class COAHandler(SimpleHTTPRequestHandler):
         else:
             self.send_error(404)
 
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path.startswith('/api/cancel/'):
+            job_id = path.split('/api/cancel/')[1]
+            self._handle_cancel(job_id)
+        elif path.startswith('/api/remove/'):
+            job_id = path.split('/api/remove/')[1]
+            self._handle_remove(job_id)
+        else:
+            self.send_error(404)
+
     # --- Handlers ---
 
     def _serve_file(self, filepath: Path, content_type: str):
@@ -423,6 +435,43 @@ class COAHandler(SimpleHTTPRequestHandler):
             launch_error_fix_silent(jobs, job_id, job['pdf_path'],
                                     job['template_path'], job['output_path'],
                                     message)
+        _json_response(self, {'ok': True})
+
+    def _handle_cancel(self, job_id):
+        """Reset job back to pending state."""
+        job = jobs.get_job(job_id)
+        if not job:
+            _json_response(self, {'error': 'Job not found'}, 404)
+            return
+        if job['status'] == 'pending':
+            _json_response(self, {'ok': True})
+            return
+        jobs.update_job(job_id, status='pending', output_path=None,
+                        error=None, ai_output=None,
+                        template_name=None, template_path=None)
+        _json_response(self, {'ok': True})
+
+    def _handle_remove(self, job_id):
+        """Delete job and clean up files on disk."""
+        job = jobs.get_job(job_id)
+        if not job:
+            _json_response(self, {'error': 'Job not found'}, 404)
+            return
+        # Remove input PDF
+        pdf_path = job.get('pdf_path')
+        if pdf_path and os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+            except OSError:
+                pass
+        # Remove output file
+        output_path = job.get('output_path')
+        if output_path and os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+        jobs.delete_job(job_id)
         _json_response(self, {'ok': True})
 
     def _handle_download(self, job_id):
