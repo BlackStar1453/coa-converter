@@ -63,13 +63,13 @@ def launch_verification(job_manager, job_id: str, pdf_path: str,
     # Write a temp script to avoid AppleScript escaping nightmares
     script_path = f'/tmp/coa-verify-{job_id}.sh'
     script_content = f"""#!/bin/bash
+trap 'echo "done" > {marker_q}' EXIT
 echo "=== COA AI Verification (Job: {job_id}) ==="
 echo "PDF: {pdf_path}"
 echo "Template: {os.path.basename(template_path)}"
 echo "Output: {output_path}"
 echo "---"
 {CLAUDE_CLI} --dangerously-skip-permissions "/coa-to-template {pdf_q} {tpl_q} {out_q}"
-echo "done" > {marker_q}
 echo "=== Verification complete. You can close this window. ==="
 """
     with open(script_path, 'w') as f:
