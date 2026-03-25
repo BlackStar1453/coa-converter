@@ -88,18 +88,62 @@ h1 {
   appearance: auto;
 }
 
-.template-checklist {
+/* Template multi-select dropdown */
+.template-dropdown {
   flex: 1;
   min-width: 200px;
+  position: relative;
+}
+
+.template-dropdown-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 8px 12px;
   border: 1px solid #d2d2d7;
   border-radius: 8px;
   background: #fff;
-  max-height: 160px;
+  font-size: 14px;
+  color: #1d1d1f;
+  cursor: pointer;
+  user-select: none;
+}
+
+.template-dropdown-toggle:hover {
+  border-color: #86868b;
+}
+
+.template-dropdown-arrow {
+  font-size: 10px;
+  color: #86868b;
+  margin-left: 8px;
+}
+
+.template-dropdown.open .template-dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+.template-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #d2d2d7;
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  max-height: 200px;
   overflow-y: auto;
 }
 
-.template-checklist label {
+.template-dropdown.open .template-dropdown-menu {
+  display: block;
+}
+
+.template-dropdown-menu label {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -109,6 +153,10 @@ h1 {
   color: #1d1d1f;
 }
 
+.template-dropdown-menu label:hover {
+  color: #0071e3;
+}
+
 .template-check-all {
   border-bottom: 1px solid #e8e8ed;
   padding-bottom: 6px !important;
@@ -116,7 +164,7 @@ h1 {
   font-weight: 500;
 }
 
-.template-checklist input[type="checkbox"] {
+.template-dropdown-menu input[type="checkbox"] {
   accent-color: #0071e3;
 }
 

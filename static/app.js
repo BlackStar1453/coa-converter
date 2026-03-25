@@ -26,11 +26,13 @@ async function loadTemplates() {
       cb.type = 'checkbox';
       cb.value = t.path;
       cb.className = 'template-cb';
-      cb.addEventListener('change', updateConvertButton);
+      cb.addEventListener('change', () => { updateConvertButton(); updateTemplateSummary(); });
       lbl.appendChild(cb);
       lbl.appendChild(document.createTextNode(` ${t.name} (${t.format})`));
       list.appendChild(lbl);
     });
+    updateTemplateSummary();
+    setupTemplateDropdown();
   } catch (e) {
     console.error('Failed to load templates:', e);
   }
@@ -38,6 +40,36 @@ async function loadTemplates() {
 
 function getSelectedTemplates() {
   return Array.from(document.querySelectorAll('.template-cb:checked')).map(cb => cb.value);
+}
+
+function updateTemplateSummary() {
+  const sel = getSelectedTemplates();
+  const summary = document.getElementById('templateSummary');
+  if (!templates.length) {
+    summary.textContent = 'No templates available';
+  } else if (sel.length === 0) {
+    summary.textContent = '-- Select Template --';
+    summary.style.color = '#86868b';
+  } else {
+    summary.textContent = `${sel.length} template${sel.length > 1 ? 's' : ''} selected`;
+    summary.style.color = '#1d1d1f';
+  }
+}
+
+function setupTemplateDropdown() {
+  const dropdown = document.getElementById('templateDropdown');
+  const toggle = document.getElementById('templateToggle');
+
+  toggle.addEventListener('click', () => {
+    dropdown.classList.toggle('open');
+  });
+
+  // Close when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!dropdown.contains(e.target)) {
+      dropdown.classList.remove('open');
+    }
+  });
 }
 
 // --- Upload ---
@@ -103,6 +135,7 @@ function setupButtons() {
   document.getElementById('templateSelectAll').addEventListener('change', (e) => {
     document.querySelectorAll('.template-cb').forEach(cb => cb.checked = e.target.checked);
     updateConvertButton();
+    updateTemplateSummary();
   });
 }
 

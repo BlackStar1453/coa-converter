@@ -24,11 +24,17 @@
   <div class="card">
     <h2>Settings</h2>
     <div class="controls">
-      <div id="templateSelect" class="template-checklist">
-        <label class="template-check-all">
-          <input type="checkbox" id="templateSelectAll"> Select All
-        </label>
-        <div id="templateList">Loading templates...</div>
+      <div class="template-dropdown" id="templateDropdown">
+        <div class="template-dropdown-toggle" id="templateToggle">
+          <span id="templateSummary">Loading templates...</span>
+          <span class="template-dropdown-arrow">&#9662;</span>
+        </div>
+        <div class="template-dropdown-menu" id="templateMenu">
+          <label class="template-check-all">
+            <input type="checkbox" id="templateSelectAll"> Select All
+          </label>
+          <div id="templateList"></div>
+        </div>
       </div>
       <label>
         <input type="checkbox" id="forceVerify" checked>
