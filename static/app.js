@@ -3,6 +3,7 @@
 const API = '';
 let templates = [];
 let pollTimer = null;
+let isLocal = true;
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -151,7 +152,8 @@ async function checkClientInfo() {
   try {
     const res = await fetch(`${API}/api/client-info`);
     const info = await res.json();
-    if (!info.is_local) {
+    isLocal = info.is_local;
+    if (!isLocal) {
       const sel = document.getElementById('claudeMode');
       sel.value = 'silent';
       sel.disabled = true;
@@ -274,8 +276,9 @@ function renderJobs(jobList) {
     const statusLabel = {
       pending: 'Pending',
       converting: 'Converting...',
+      converted: 'Unverified',
       verifying: 'AI Verifying...',
-      done: 'Done',
+      done: 'Verified',
       error: 'Error',
     }[status] || status;
 
@@ -285,20 +288,27 @@ function renderJobs(jobList) {
       actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
     } else if (status === 'converting') {
       actions = '<span style="color:#86868b;font-size:12px">Processing...</span>';
+    } else if (status === 'converted') {
+      actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
+      actions += ` <button class="btn btn-secondary btn-sm" onclick="verifyJob('${job.id}')">Verify</button>`;
+      actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
     } else if (status === 'verifying') {
-      if (getClaudeMode() === 'interactive') {
-        actions = `<button class="btn btn-secondary btn-sm" onclick="focusTerminal()">View Terminal</button>`;
+      actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
+      if (isLocal && getClaudeMode() === 'interactive') {
+        actions += ` <button class="btn btn-secondary btn-sm" onclick="focusTerminal()">View Terminal</button>`;
       } else {
-        actions = '<span style="color:#86868b;font-size:12px">AI verifying...</span>';
+        actions += ' <span style="color:#86868b;font-size:12px">AI verifying...</span>';
       }
     } else if (status === 'done') {
       actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
+      actions += ` <button class="btn btn-warning btn-sm" onclick="reportError('${job.id}')">Report Error</button>`;
       actions += ` <button class="btn btn-secondary btn-sm" onclick="verifyJob('${job.id}')">Re-verify</button>`;
       actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
     } else if (status === 'error') {
       actions = `<span class="error-text" title="${(job.error || '').replace(/"/g, '&quot;')}">${job.error || 'Unknown error'}</span>`;
       if (job.output_path) {
         actions += ` <a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
+        actions += ` <button class="btn btn-warning btn-sm" onclick="reportError('${job.id}')">Report Error</button>`;
       }
       actions += ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')">&times;</button>`;
     }
@@ -324,6 +334,25 @@ function renderJobs(jobList) {
 function escHtml(s) {
   if (!s) return '';
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// --- Report Error ---
+async function reportError(jobId) {
+  const msg = prompt('Please describe the error you found in the output:');
+  if (!msg || !msg.trim()) return;
+
+  try {
+    const res = await fetch(`${API}/api/report-error/${jobId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg.trim(), claude_mode: getClaudeMode() }),
+    });
+    const data = await res.json();
+    if (!res.ok) alert(data.error || 'Report failed');
+    refreshJobs();
+  } catch (e) {
+    alert('Report failed: ' + e.message);
+  }
 }
 
 // --- Polling ---

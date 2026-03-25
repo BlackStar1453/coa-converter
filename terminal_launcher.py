@@ -174,6 +174,98 @@ def launch_verification_silent(job_manager, job_id: str, pdf_path: str,
     t.start()
 
 
+def launch_error_fix(job_manager, job_id: str, pdf_path: str,
+                     template_path: str, output_path: str, error_msg: str):
+    """Open Terminal.app running Claude Code to fix reported errors."""
+    if not CLAUDE_CLI:
+        logger.error('Claude CLI not found')
+        job_manager.update_job(job_id, status='error',
+                               error='Claude CLI not found.')
+        return
+
+    marker_file = os.path.join(MARKER_DIR, f'coa-verify-{job_id}.done')
+    if os.path.exists(marker_file):
+        os.remove(marker_file)
+
+    pdf_q = shlex.quote(pdf_path)
+    tpl_q = shlex.quote(template_path)
+    out_q = shlex.quote(output_path)
+    marker_q = shlex.quote(marker_file)
+    # Escape error message for shell
+    err_q = shlex.quote(error_msg)
+
+    script_path = f'/tmp/coa-fix-{job_id}.sh'
+    script_content = f"""#!/bin/bash
+trap 'echo "done" > {marker_q}' EXIT
+echo "=== COA Error Fix (Job: {job_id}) ==="
+echo "Error reported: {error_msg}"
+echo "---"
+{CLAUDE_CLI} --dangerously-skip-permissions "/coa-fix-output {pdf_q} {tpl_q} {out_q} User reported error: {err_q}"
+echo "=== Fix complete. You can close this window. ==="
+"""
+    with open(script_path, 'w') as f:
+        f.write(script_content)
+    os.chmod(script_path, 0o755)
+
+    applescript = f'tell application "Terminal" to do script "{_escape_for_applescript(script_path)}"'
+    try:
+        subprocess.run(['osascript', '-e', applescript], check=True,
+                       capture_output=True, timeout=10)
+        subprocess.run(['osascript', '-e',
+                        'tell application "Terminal" to activate'],
+                       capture_output=True, timeout=5)
+    except Exception as e:
+        logger.error(f'Failed to launch Terminal for error fix {job_id}: {e}')
+        job_manager.update_job(job_id, status='error',
+                               error=f'Terminal launch failed: {e}')
+        return
+
+    _start_marker_poll(job_manager, job_id, marker_file)
+
+
+def launch_error_fix_silent(job_manager, job_id: str, pdf_path: str,
+                            template_path: str, output_path: str,
+                            error_msg: str):
+    """Run Claude Code silently to fix reported errors."""
+    if not CLAUDE_CLI:
+        logger.error('Claude CLI not found')
+        job_manager.update_job(job_id, status='error',
+                               error='Claude CLI not found.')
+        return
+
+    prompt = (f"/coa-fix-output {pdf_path} {template_path} {output_path} "
+              f"User reported error: {error_msg}")
+
+    def _run():
+        try:
+            result = subprocess.run(
+                [CLAUDE_CLI, '--dangerously-skip-permissions', '-p', prompt],
+                cwd=os.path.dirname(output_path),
+                capture_output=True, text=True, timeout=300,
+            )
+            output = result.stdout or ''
+            if result.stderr:
+                output += '\n--- stderr ---\n' + result.stderr
+
+            if result.returncode == 0:
+                job_manager.update_job(job_id, status='done',
+                                       ai_output=output)
+            else:
+                job_manager.update_job(job_id, status='error',
+                                       error='Claude returned non-zero exit',
+                                       ai_output=output)
+        except subprocess.TimeoutExpired:
+            job_manager.update_job(job_id, status='error',
+                                   error='Claude timed out (5 min)')
+        except Exception as e:
+            logger.error(f'Error fix failed for job {job_id}: {e}')
+            job_manager.update_job(job_id, status='error',
+                                   error=f'Fix failed: {e}')
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
 def focus_terminal():
     """Bring Terminal.app to front."""
     try:

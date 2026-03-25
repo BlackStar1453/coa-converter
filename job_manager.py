@@ -9,7 +9,7 @@ from typing import Optional
 class JobManager:
     """Manages conversion jobs with thread-safe status tracking."""
 
-    STATUSES = ('pending', 'converting', 'verifying', 'done', 'error')
+    STATUSES = ('pending', 'converting', 'converted', 'verifying', 'done', 'error')
 
     def __init__(self):
         self._jobs = {}

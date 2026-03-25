@@ -44,6 +44,9 @@ def run_conversion(job_manager, job_id: str, pdf_path: str,
             job = job_manager.get_job(job_id)
             force = job.get('force_verify', False)
 
+            # Mark as converted (downloadable) immediately
+            job_manager.update_job(job_id, status='converted')
+
             if needs_verify or force:
                 job_manager.update_job(job_id, status='verifying')
                 if on_complete:

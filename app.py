@@ -151,6 +151,9 @@ class COAHandler(SimpleHTTPRequestHandler):
         elif path.startswith('/api/verify/'):
             job_id = path.split('/api/verify/')[1]
             self._handle_verify(job_id)
+        elif path.startswith('/api/report-error/'):
+            job_id = path.split('/api/report-error/')[1]
+            self._handle_report_error(job_id)
         elif path == '/api/focus-terminal':
             focus_terminal()
             _json_response(self, {'ok': True})
@@ -384,6 +387,42 @@ class COAHandler(SimpleHTTPRequestHandler):
         else:
             launch_verification_silent(jobs, job_id, job['pdf_path'],
                                        job['template_path'], job['output_path'])
+        _json_response(self, {'ok': True})
+
+    def _handle_report_error(self, job_id):
+        body = _read_body(self)
+        try:
+            params = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            params = {}
+
+        message = params.get('message', '').strip()
+        if not message:
+            _json_response(self, {'error': 'Error message required'}, 400)
+            return
+
+        job = jobs.get_job(job_id)
+        if not job:
+            _json_response(self, {'error': 'Job not found'}, 404)
+            return
+        if not job.get('output_path'):
+            _json_response(self, {'error': 'No output file yet'}, 400)
+            return
+
+        claude_mode = params.get('claude_mode', 'silent')
+        if not self._is_local():
+            claude_mode = 'silent'
+
+        jobs.update_job(job_id, status='verifying')
+
+        from terminal_launcher import launch_error_fix_silent, launch_error_fix
+        if claude_mode == 'interactive':
+            launch_error_fix(jobs, job_id, job['pdf_path'],
+                             job['template_path'], job['output_path'], message)
+        else:
+            launch_error_fix_silent(jobs, job_id, job['pdf_path'],
+                                    job['template_path'], job['output_path'],
+                                    message)
         _json_response(self, {'ok': True})
 
     def _handle_download(self, job_id):
