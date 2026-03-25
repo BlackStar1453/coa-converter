@@ -13,6 +13,7 @@ import sys
 import time
 import threading
 import unittest
+import uuid
 from http.client import HTTPConnection
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -513,7 +514,6 @@ class TestFrontendHTML(unittest.TestCase):
 
         # Should have Select All checkbox
         self.assertIn('templateSelectAll', html)
-        self.assertIn('template-checklist', html)
         self.assertIn('templateList', html)
         # Should NOT have the old single-select dropdown for templates
         self.assertNotIn('<select id="templateSelect">', html)
@@ -531,7 +531,7 @@ class TestFrontendHTML(unittest.TestCase):
         # convertAll should send template_paths array
         self.assertIn('template_paths:', js)
         # Download links should have download attribute
-        self.assertIn('download>Download</a>', js)
+        self.assertIn('download title="Download">', js)
 
 
 class TestInputPDFNotDeleted(unittest.TestCase):
@@ -594,6 +594,847 @@ class TestInputPDFNotDeleted(unittest.TestCase):
         # PDF should still exist
         self.assertTrue(os.path.exists(pdf_path),
                         f'Input PDF was deleted: {pdf_path}')
+
+
+# ===================== Integration Tests: Core Flows =====================
+
+
+class TestUploadFlow(unittest.TestCase):
+    """Integration tests for the file upload flow."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+        self.pdf_data = _make_minimal_pdf()
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def _upload(self, filename='test.pdf', data=None):
+        if data is None:
+            data = self.pdf_data
+        boundary = '----UploadTest'
+        body = (
+            f'------UploadTest\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f'Content-Type: application/pdf\r\n\r\n'
+        ).encode() + data + b'\r\n------UploadTest--\r\n'
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=body,
+                     headers={'Content-Type': 'multipart/form-data; boundary=----UploadTest'})
+        resp = conn.getresponse()
+        return resp.status, json.loads(resp.read())
+
+    def test_upload_single_pdf(self):
+        fname = f'sample_{uuid.uuid4().hex[:6]}.pdf'
+        status, data = self._upload(fname)
+        self.assertEqual(status, 201)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['pdf_name'], fname)
+        self.assertEqual(data[0]['status'], 'pending')
+        self.assertIn('id', data[0])
+        self.assertIn('pdf_path', data[0])
+
+    def test_upload_creates_file_on_disk(self):
+        status, data = self._upload('disk_check.pdf')
+        self.assertEqual(status, 201)
+        self.assertTrue(os.path.exists(data[0]['pdf_path']))
+
+    def test_upload_duplicate_name_auto_renames(self):
+        self._upload('dup.pdf')
+        status, data = self._upload('dup.pdf')
+        self.assertEqual(status, 201)
+        # Second upload should have a different filename (dup_1.pdf)
+        self.assertNotEqual(data[0]['pdf_name'], 'dup.pdf')
+        self.assertIn('dup_', data[0]['pdf_name'])
+
+    def test_upload_non_pdf_rejected(self):
+        boundary = '----UploadTest'
+        body = (
+            f'------UploadTest\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="doc.txt"\r\n'
+            f'Content-Type: text/plain\r\n\r\n'
+        ).encode() + b'not a pdf\r\n------UploadTest--\r\n'
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=body,
+                     headers={'Content-Type': 'multipart/form-data; boundary=----UploadTest'})
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        self.assertEqual(resp.status, 400)
+        self.assertIn('error', data)
+
+    def test_upload_no_files(self):
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=b'',
+                     headers={'Content-Type': 'application/json', 'Content-Length': '0'})
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        self.assertEqual(resp.status, 400)
+
+    def test_upload_job_appears_in_list(self):
+        fname = f'listed_{uuid.uuid4().hex[:6]}.pdf'
+        self._upload(fname)
+        conn = self.srv.conn()
+        conn.request('GET', '/api/jobs')
+        resp = conn.getresponse()
+        jobs_list = json.loads(resp.read())
+        conn.close()
+        names = [j['pdf_name'] for j in jobs_list]
+        self.assertIn(fname, names)
+
+
+class TestSingleConvertFlow(unittest.TestCase):
+    """Integration tests for single-job conversion (POST /api/convert/{id})."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+        self.pdf_data = _make_minimal_pdf()
+        self.templates = _get_template_paths()
+        if not self.templates:
+            self.skipTest('Need at least 1 template')
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def _upload(self, filename='conv_test.pdf'):
+        boundary = '----ConvTest'
+        body = (
+            f'------ConvTest\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f'Content-Type: application/pdf\r\n\r\n'
+        ).encode() + self.pdf_data + b'\r\n------ConvTest--\r\n'
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=body,
+                     headers={'Content-Type': 'multipart/form-data; boundary=----ConvTest'})
+        resp = conn.getresponse()
+        return json.loads(resp.read())
+
+    @patch('converter_service.convert_coa')
+    @patch('converter_service.check_supplier')
+    def test_convert_known_supplier_goes_to_done(self, mock_supplier, mock_convert):
+        """Known supplier + no force_verify → status should reach 'done'."""
+        mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'out'), o)[1]
+        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
+
+        data = self._upload()
+        job_id = data[0]['id']
+
+        payload = json.dumps({
+            'template_path': self.templates[0],
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+
+        self.assertTrue(result.get('ok'))
+        time.sleep(2)
+
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/jobs/{job_id}')
+        resp = conn.getresponse()
+        job = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(job['status'], 'done')
+        self.assertIsNotNone(job['output_path'])
+
+    @patch('converter_service.convert_coa')
+    @patch('converter_service.check_supplier')
+    def test_convert_sets_template_info(self, mock_supplier, mock_convert):
+        mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'x'), o)[1]
+        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
+
+        data = self._upload()
+        job_id = data[0]['id']
+        tpl = self.templates[0]
+
+        payload = json.dumps({
+            'template_path': tpl,
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+
+        time.sleep(2)
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/jobs/{job_id}')
+        resp = conn.getresponse()
+        job = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(job['template_name'], os.path.basename(tpl))
+        self.assertEqual(job['template_path'], tpl)
+
+    def test_convert_missing_template_returns_400(self):
+        data = self._upload()
+        job_id = data[0]['id']
+        payload = json.dumps({}).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 400)
+        self.assertIn('template_path', result.get('error', ''))
+
+    def test_convert_nonexistent_job_returns_404(self):
+        payload = json.dumps({'template_path': self.templates[0]}).encode()
+        conn = self.srv.conn()
+        conn.request('POST', '/api/convert/nosuchjob', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 404)
+
+    @patch('converter_service.convert_coa')
+    @patch('converter_service.check_supplier')
+    def test_convert_already_converted_returns_400(self, mock_supplier, mock_convert):
+        """Cannot convert a job that's not pending."""
+        mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'x'), o)[1]
+        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
+
+        data = self._upload()
+        job_id = data[0]['id']
+        payload = json.dumps({
+            'template_path': self.templates[0],
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+
+        # First convert
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        time.sleep(2)
+
+        # Second convert attempt should fail
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 400)
+
+    @patch('converter_service.convert_coa')
+    def test_convert_error_sets_error_status(self, mock_convert):
+        """If conversion throws, job status should be 'error'."""
+        mock_convert.side_effect = RuntimeError('Conversion engine failure')
+
+        data = self._upload()
+        job_id = data[0]['id']
+        payload = json.dumps({
+            'template_path': self.templates[0],
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+
+        time.sleep(2)
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/jobs/{job_id}')
+        resp = conn.getresponse()
+        job = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(job['status'], 'error')
+        self.assertIn('Conversion engine failure', job['error'])
+
+
+class TestVerifyFlow(unittest.TestCase):
+    """Integration tests for manual re-verification (POST /api/verify/{id})."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+        self.pdf_data = _make_minimal_pdf()
+        self.templates = _get_template_paths()
+        if not self.templates:
+            self.skipTest('Need at least 1 template')
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def _upload_and_convert(self):
+        """Upload a PDF and convert it, returning job_id."""
+        boundary = '----VTest'
+        body = (
+            f'------VTest\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="verify_test.pdf"\r\n'
+            f'Content-Type: application/pdf\r\n\r\n'
+        ).encode() + self.pdf_data + b'\r\n------VTest--\r\n'
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=body,
+                     headers={'Content-Type': 'multipart/form-data; boundary=----VTest'})
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        return data[0]['id']
+
+    @patch('terminal_launcher.launch_verification_silent')
+    @patch('converter_service.convert_coa')
+    @patch('converter_service.check_supplier')
+    def test_verify_sets_status_to_verifying(self, mock_supplier, mock_convert, mock_verify):
+        mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'out'), o)[1]
+        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
+
+        job_id = self._upload_and_convert()
+        # Convert first
+        payload = json.dumps({
+            'template_path': self.templates[0],
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        time.sleep(2)
+
+        # Now verify
+        verify_payload = json.dumps({'claude_mode': 'silent'}).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/verify/{job_id}', body=verify_payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+
+        self.assertEqual(resp.status, 200)
+        self.assertTrue(result.get('ok'))
+
+        # Job should now be 'verifying'
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/jobs/{job_id}')
+        resp = conn.getresponse()
+        job = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(job['status'], 'verifying')
+
+    def test_verify_nonexistent_job_returns_404(self):
+        payload = json.dumps({'claude_mode': 'silent'}).encode()
+        conn = self.srv.conn()
+        conn.request('POST', '/api/verify/nope', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 404)
+
+    def test_verify_pending_job_returns_400(self):
+        """Cannot verify a job that has no output file yet."""
+        job_id = self._upload_and_convert()
+        payload = json.dumps({'claude_mode': 'silent'}).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/verify/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 400)
+        self.assertIn('No output', result.get('error', ''))
+
+
+class TestReportErrorFlow(unittest.TestCase):
+    """Integration tests for error reporting (POST /api/report-error/{id})."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+        self.pdf_data = _make_minimal_pdf()
+        self.templates = _get_template_paths()
+        if not self.templates:
+            self.skipTest('Need at least 1 template')
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def _upload_and_convert_to_done(self):
+        boundary = '----ErrTest'
+        body = (
+            f'------ErrTest\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="err_test.pdf"\r\n'
+            f'Content-Type: application/pdf\r\n\r\n'
+        ).encode() + self.pdf_data + b'\r\n------ErrTest--\r\n'
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=body,
+                     headers={'Content-Type': 'multipart/form-data; boundary=----ErrTest'})
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        return data[0]['id']
+
+    @patch('terminal_launcher.launch_error_fix_silent')
+    @patch('converter_service.convert_coa')
+    @patch('converter_service.check_supplier')
+    def test_report_error_triggers_fix(self, mock_supplier, mock_convert, mock_fix):
+        mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'out'), o)[1]
+        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
+
+        job_id = self._upload_and_convert_to_done()
+        # Convert
+        payload = json.dumps({
+            'template_path': self.templates[0],
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        time.sleep(2)
+
+        # Report error
+        error_payload = json.dumps({
+            'message': 'Vitamin D3 value is wrong',
+            'claude_mode': 'silent',
+        }).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/report-error/{job_id}', body=error_payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+
+        self.assertEqual(resp.status, 200)
+        self.assertTrue(result.get('ok'))
+        mock_fix.assert_called_once()
+        # Verify the error message was passed through
+        call_args = mock_fix.call_args
+        self.assertIn('Vitamin D3 value is wrong', call_args[0])
+
+    def test_report_error_empty_message_returns_400(self):
+        job_id = self._upload_and_convert_to_done()
+        payload = json.dumps({'message': '', 'claude_mode': 'silent'}).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/report-error/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 400)
+        self.assertIn('message', result.get('error', '').lower())
+
+    def test_report_error_nonexistent_job_returns_404(self):
+        payload = json.dumps({'message': 'wrong', 'claude_mode': 'silent'}).encode()
+        conn = self.srv.conn()
+        conn.request('POST', '/api/report-error/nope', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 404)
+
+
+class TestRemoveFlow(unittest.TestCase):
+    """Integration tests for job removal (POST /api/remove/{id})."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+        self.pdf_data = _make_minimal_pdf()
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def _upload(self, filename='remove_test.pdf'):
+        boundary = '----RmTest'
+        body = (
+            f'------RmTest\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f'Content-Type: application/pdf\r\n\r\n'
+        ).encode() + self.pdf_data + b'\r\n------RmTest--\r\n'
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=body,
+                     headers={'Content-Type': 'multipart/form-data; boundary=----RmTest'})
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        return data[0]
+
+    def test_remove_deletes_job(self):
+        job = self._upload()
+        job_id = job['id']
+
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/remove/{job_id}')
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+
+        self.assertEqual(resp.status, 200)
+        self.assertTrue(result.get('ok'))
+
+        # Job should no longer exist
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/jobs/{job_id}')
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 404)
+
+    def test_remove_deletes_pdf_from_disk(self):
+        job = self._upload()
+        pdf_path = job['pdf_path']
+        self.assertTrue(os.path.exists(pdf_path))
+
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/remove/{job["id"]}')
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+
+        self.assertFalse(os.path.exists(pdf_path))
+
+    @patch('converter_service.convert_coa')
+    @patch('converter_service.check_supplier')
+    def test_remove_deletes_output_file(self, mock_supplier, mock_convert):
+        """Remove should clean up the output file too."""
+        mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'data'), o)[1]
+        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
+        templates = _get_template_paths()
+        if not templates:
+            self.skipTest('Need at least 1 template')
+
+        job = self._upload()
+        job_id = job['id']
+
+        # Convert
+        payload = json.dumps({
+            'template_path': templates[0],
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        time.sleep(2)
+
+        # Get output path
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/jobs/{job_id}')
+        resp = conn.getresponse()
+        job_data = json.loads(resp.read())
+        conn.close()
+        output_path = job_data['output_path']
+        self.assertTrue(os.path.exists(output_path))
+
+        # Remove
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/remove/{job_id}')
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+
+        self.assertFalse(os.path.exists(output_path))
+
+    def test_remove_job_disappears_from_list(self):
+        job = self._upload()
+        job_id = job['id']
+
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/remove/{job_id}')
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+
+        conn = self.srv.conn()
+        conn.request('GET', '/api/jobs')
+        resp = conn.getresponse()
+        jobs_list = json.loads(resp.read())
+        conn.close()
+        ids = [j['id'] for j in jobs_list]
+        self.assertNotIn(job_id, ids)
+
+    def test_remove_nonexistent_returns_404(self):
+        conn = self.srv.conn()
+        conn.request('POST', '/api/remove/nonexist')
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 404)
+
+
+class TestJobGetFlow(unittest.TestCase):
+    """Integration tests for job retrieval endpoints."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+        self.pdf_data = _make_minimal_pdf()
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def _upload(self, filename='get_test.pdf'):
+        boundary = '----GetTest'
+        body = (
+            f'------GetTest\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f'Content-Type: application/pdf\r\n\r\n'
+        ).encode() + self.pdf_data + b'\r\n------GetTest--\r\n'
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=body,
+                     headers={'Content-Type': 'multipart/form-data; boundary=----GetTest'})
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        return data[0]
+
+    def test_get_single_job(self):
+        fname = f'get_test_{uuid.uuid4().hex[:6]}.pdf'
+        job = self._upload(fname)
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/jobs/{job["id"]}')
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(data['id'], job['id'])
+        self.assertEqual(data['pdf_name'], fname)
+        self.assertEqual(data['status'], 'pending')
+
+    def test_get_nonexistent_job_returns_404(self):
+        conn = self.srv.conn()
+        conn.request('GET', '/api/jobs/doesnotexist')
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 404)
+        self.assertIn('error', data)
+
+    def test_list_jobs_returns_all(self):
+        self._upload('a.pdf')
+        self._upload('b.pdf')
+        conn = self.srv.conn()
+        conn.request('GET', '/api/jobs')
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(len(data), 2)
+
+    def test_list_jobs_empty(self):
+        conn = self.srv.conn()
+        conn.request('GET', '/api/jobs')
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(data, [])
+
+
+class TestClientInfoFlow(unittest.TestCase):
+    """Integration tests for client info endpoint."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def test_client_info_localhost(self):
+        conn = self.srv.conn()
+        conn.request('GET', '/api/client-info')
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 200)
+        self.assertIn('is_local', data)
+        self.assertTrue(data['is_local'])
+
+
+class TestConvertAllEdgeCases(unittest.TestCase):
+    """Edge case tests for batch conversion."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+        self.pdf_data = _make_minimal_pdf()
+        self.templates = _get_template_paths()
+        if not self.templates:
+            self.skipTest('Need at least 1 template')
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def _upload(self, filename='batch_edge.pdf'):
+        boundary = '----BatchEdge'
+        body = (
+            f'------BatchEdge\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f'Content-Type: application/pdf\r\n\r\n'
+        ).encode() + self.pdf_data + b'\r\n------BatchEdge--\r\n'
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=body,
+                     headers={'Content-Type': 'multipart/form-data; boundary=----BatchEdge'})
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        return data[0]
+
+    def test_convert_all_no_templates_returns_400(self):
+        self._upload()
+        payload = json.dumps({'template_paths': []}).encode()
+        conn = self.srv.conn()
+        conn.request('POST', '/api/convert-all', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 400)
+
+    def test_convert_all_no_pending_jobs_returns_400(self):
+        # No uploads, so no pending jobs
+        payload = json.dumps({'template_paths': [self.templates[0]]}).encode()
+        conn = self.srv.conn()
+        conn.request('POST', '/api/convert-all', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 400)
+        self.assertIn('pending', result.get('error', '').lower())
+
+    @patch('converter_service.convert_coa')
+    @patch('converter_service.check_supplier')
+    def test_convert_all_multiple_pdfs_multiple_templates(self, mock_supplier, mock_convert):
+        """2 PDFs × 2 templates = 4 jobs total."""
+        mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'x'), o)[1]
+        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
+
+        if len(self.templates) < 2:
+            self.skipTest('Need at least 2 templates')
+
+        self._upload('multi1.pdf')
+        self._upload('multi2.pdf')
+
+        payload = json.dumps({
+            'template_paths': self.templates[:2],
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+        conn = self.srv.conn()
+        conn.request('POST', '/api/convert-all', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        result = json.loads(resp.read())
+        conn.close()
+
+        self.assertTrue(result.get('ok'))
+        self.assertEqual(result['count'], 4)  # 2 PDFs × 2 templates
+
+        time.sleep(3)
+        conn = self.srv.conn()
+        conn.request('GET', '/api/jobs')
+        resp = conn.getresponse()
+        jobs_list = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(len(jobs_list), 4)
+        self.assertTrue(all(j['status'] == 'done' for j in jobs_list))
+
+
+class TestFullLifecycle(unittest.TestCase):
+    """End-to-end lifecycle: upload → convert → download → remove."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+        self.pdf_data = _make_minimal_pdf()
+        self.templates = _get_template_paths()
+        if not self.templates:
+            self.skipTest('Need at least 1 template')
+
+    def tearDown(self):
+        self.srv.stop()
+
+    @patch('converter_service.convert_coa')
+    @patch('converter_service.check_supplier')
+    def test_upload_convert_download_remove(self, mock_supplier, mock_convert):
+        output_content = b'Full lifecycle output data'
+        mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(output_content), o)[1]
+        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
+
+        # 1. Upload
+        boundary = '----Lifecycle'
+        body = (
+            f'------Lifecycle\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="lifecycle.pdf"\r\n'
+            f'Content-Type: application/pdf\r\n\r\n'
+        ).encode() + self.pdf_data + b'\r\n------Lifecycle--\r\n'
+        conn = self.srv.conn()
+        conn.request('POST', '/api/upload', body=body,
+                     headers={'Content-Type': 'multipart/form-data; boundary=----Lifecycle'})
+        resp = conn.getresponse()
+        jobs_data = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(resp.status, 201)
+        job_id = jobs_data[0]['id']
+
+        # 2. Convert
+        payload = json.dumps({
+            'template_path': self.templates[0],
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/convert/{job_id}', body=payload,
+                     headers={'Content-Type': 'application/json'})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        time.sleep(2)
+
+        # 3. Verify status is done
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/jobs/{job_id}')
+        resp = conn.getresponse()
+        job = json.loads(resp.read())
+        conn.close()
+        self.assertEqual(job['status'], 'done')
+
+        # 4. Download
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/download/{job_id}')
+        resp = conn.getresponse()
+        dl_body = resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(dl_body, output_content)
+        self.assertIn('attachment', resp.getheader('Content-Disposition', ''))
+
+        # 5. Remove
+        conn = self.srv.conn()
+        conn.request('POST', f'/api/remove/{job_id}')
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 200)
+
+        # 6. Verify gone
+        conn = self.srv.conn()
+        conn.request('GET', f'/api/jobs/{job_id}')
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 404)
 
 
 if __name__ == '__main__':

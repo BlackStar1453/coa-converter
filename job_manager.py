@@ -26,7 +26,6 @@ class JobManager:
             'status': 'pending',
             'output_path': None,
             'error': None,
-            'ai_output': None,
             'needs_verification': None,
             'force_verify': False,
             'created_at': datetime.now().isoformat(),

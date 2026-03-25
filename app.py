@@ -154,27 +154,12 @@ class COAHandler(SimpleHTTPRequestHandler):
         elif path.startswith('/api/report-error/'):
             job_id = path.split('/api/report-error/')[1]
             self._handle_report_error(job_id)
-        elif path.startswith('/api/cancel/'):
-            job_id = path.split('/api/cancel/')[1]
-            self._handle_cancel(job_id)
         elif path.startswith('/api/remove/'):
             job_id = path.split('/api/remove/')[1]
             self._handle_remove(job_id)
         elif path == '/api/focus-terminal':
             focus_terminal()
             _json_response(self, {'ok': True})
-        else:
-            self.send_error(404)
-
-    def do_DELETE(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        if path.startswith('/api/jobs/'):
-            job_id = path.split('/api/jobs/')[1]
-            if jobs.delete_job(job_id):
-                _json_response(self, {'ok': True})
-            else:
-                _json_response(self, {'error': 'Job not found'}, 404)
         else:
             self.send_error(404)
 
@@ -431,20 +416,6 @@ class COAHandler(SimpleHTTPRequestHandler):
                                     message)
         _json_response(self, {'ok': True})
 
-    def _handle_cancel(self, job_id):
-        """Reset job back to pending state."""
-        job = jobs.get_job(job_id)
-        if not job:
-            _json_response(self, {'error': 'Job not found'}, 404)
-            return
-        if job['status'] == 'pending':
-            _json_response(self, {'ok': True})
-            return
-        jobs.update_job(job_id, status='pending', output_path=None,
-                        error=None, ai_output=None,
-                        template_name=None, template_path=None)
-        _json_response(self, {'ok': True})
-
     def _handle_remove(self, job_id):
         """Delete job and clean up files on disk."""
         job = jobs.get_job(job_id)
@@ -479,7 +450,8 @@ class COAHandler(SimpleHTTPRequestHandler):
             return
 
         filename = os.path.basename(output_path)
-        data = open(output_path, 'rb').read()
+        with open(output_path, 'rb') as f:
+            data = f.read()
         self.send_response(200)
         self.send_header('Content-Type', 'application/octet-stream')
         self.send_header('Content-Disposition',

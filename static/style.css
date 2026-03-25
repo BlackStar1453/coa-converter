@@ -241,6 +241,63 @@ h1 {
   border-radius: 6px;
 }
 
+/* Icon buttons */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: #f5f5f7;
+  color: #86868b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+  vertical-align: middle;
+}
+.btn-icon:hover {
+  background: #e8e8ed;
+  color: #1d1d1f;
+}
+.btn-icon-primary {
+  background: #0071e3;
+  color: #fff;
+}
+.btn-icon-primary:hover {
+  background: #0077ed;
+  color: #fff;
+}
+.btn-icon-warning {
+  background: #ff9500;
+  color: #fff;
+}
+.btn-icon-warning:hover {
+  background: #e68600;
+  color: #fff;
+}
+.btn-icon .icon {
+  width: 14px;
+  height: 14px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.actions .error-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.actions .btn-icon {
+  flex-shrink: 0;
+}
+
 /* Job table */
 .job-table {
   width: 100%;

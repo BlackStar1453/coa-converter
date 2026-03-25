@@ -227,26 +227,7 @@ async function focusTerminal() {
   }
 }
 
-async function deleteJob(jobId) {
-  try {
-    await fetch(`${API}/api/jobs/${jobId}`, { method: 'DELETE' });
-    refreshJobs();
-  } catch (e) {
-    // ignore
-  }
-}
-
-async function cancelJob(jobId) {
-  try {
-    await fetch(`${API}/api/cancel/${jobId}`, { method: 'POST' });
-    refreshJobs();
-  } catch (e) {
-    // ignore
-  }
-}
-
 async function removeJob(jobId) {
-  if (!confirm('Remove this job and delete associated files?')) return;
   try {
     await fetch(`${API}/api/remove/${jobId}`, { method: 'POST' });
     refreshJobs();
@@ -302,45 +283,44 @@ function renderJobs(jobList) {
     }[status] || status;
 
     let actions = '';
-    const deleteBtn = ` <button class="btn btn-secondary btn-sm" onclick="deleteJob('${job.id}')" title="Delete job">&times;</button>`;
-    const cancelBtn = ` <button class="btn btn-secondary btn-sm" onclick="cancelJob('${job.id}')" title="Reset to pending">Cancel</button>`;
-    const removeBtn = ` <button class="btn btn-danger btn-sm" onclick="removeJob('${job.id}')" title="Delete job and files">Remove</button>`;
+    const ico = (svg, cls='') => `<svg class="icon${cls ? ' '+cls : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>`;
+    const icoConvert = ico('<polygon points="6 3 20 12 6 21 6 3"/>');
+    const icoDownload = ico('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+    const icoVerify = ico('<polyline points="20 6 9 17 4 12"/>');
+    const icoTerminal = ico('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>');
+    const icoReport = ico('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>');
+    const icoClose = ico('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
+    const closeBtn = ` <button class="btn-icon" onclick="removeJob('${job.id}')" title="Delete job and files">${icoClose}</button>`;
 
     if (status === 'pending') {
-      actions = `<button class="btn btn-primary btn-sm" onclick="convertOne('${job.id}')">Convert</button>`;
-      actions += deleteBtn + removeBtn;
+      actions = `<button class="btn-icon btn-icon-primary" onclick="convertOne('${job.id}')" title="Convert">${icoConvert}</button>`;
+      actions += closeBtn;
     } else if (status === 'converting') {
       actions = '<span style="color:#86868b;font-size:12px">Processing...</span>';
-      actions += cancelBtn;
+      actions += closeBtn;
     } else if (status === 'converted') {
-      actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
-      actions += ` <button class="btn btn-secondary btn-sm" onclick="verifyJob('${job.id}')">Verify</button>`;
-      actions += cancelBtn + deleteBtn + removeBtn;
+      actions = `<a class="btn-icon btn-icon-primary" href="/api/download/${job.id}" download title="Download">${icoDownload}</a>`;
+      actions += ` <button class="btn-icon" onclick="verifyJob('${job.id}')" title="Verify">${icoVerify}</button>`;
+      actions += closeBtn;
     } else if (status === 'verifying') {
-      actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
+      actions = `<a class="btn-icon btn-icon-primary" href="/api/download/${job.id}" download title="Download">${icoDownload}</a>`;
       if (isLocal && getClaudeMode() === 'interactive') {
-        actions += ` <button class="btn btn-secondary btn-sm" onclick="focusTerminal()">View Terminal</button>`;
+        actions += ` <button class="btn-icon" onclick="focusTerminal()" title="View Terminal">${icoTerminal}</button>`;
       } else {
         actions += ' <span style="color:#86868b;font-size:12px">AI verifying...</span>';
       }
-      actions += cancelBtn;
+      actions += closeBtn;
     } else if (status === 'done') {
-      actions = `<a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
-      actions += ` <button class="btn btn-warning btn-sm" onclick="reportError('${job.id}')">Report Error</button>`;
-      actions += ` <button class="btn btn-secondary btn-sm" onclick="verifyJob('${job.id}')">Re-verify</button>`;
-      actions += cancelBtn + deleteBtn + removeBtn;
+      actions = `<a class="btn-icon btn-icon-primary" href="/api/download/${job.id}" download title="Download">${icoDownload}</a>`;
+      actions += ` <button class="btn-icon btn-icon-warning" onclick="reportError('${job.id}')" title="Report Error">${icoReport}</button>`;
+      actions += closeBtn;
     } else if (status === 'error') {
       actions = `<span class="error-text" title="${(job.error || '').replace(/"/g, '&quot;')}">${job.error || 'Unknown error'}</span>`;
       if (job.output_path) {
-        actions += ` <a class="btn btn-primary btn-sm" href="/api/download/${job.id}" download>Download</a>`;
-        actions += ` <button class="btn btn-warning btn-sm" onclick="reportError('${job.id}')">Report Error</button>`;
+        actions += ` <a class="btn-icon btn-icon-primary" href="/api/download/${job.id}" download title="Download">${icoDownload}</a>`;
+        actions += ` <button class="btn-icon btn-icon-warning" onclick="reportError('${job.id}')" title="Report Error">${icoReport}</button>`;
       }
-      actions += cancelBtn + deleteBtn + removeBtn;
-    }
-
-    let aiRow = '';
-    if (job.ai_output) {
-      aiRow = `<tr><td colspan="4"><details><summary style="cursor:pointer;color:#86868b;font-size:12px">AI Output</summary><pre style="white-space:pre-wrap;font-size:12px;max-height:300px;overflow:auto;background:#f5f5f7;padding:8px;border-radius:4px;margin-top:4px">${escHtml(job.ai_output)}</pre></details></td></tr>`;
+      actions += closeBtn;
     }
 
     html += `
@@ -349,7 +329,7 @@ function renderJobs(jobList) {
           <td>${escHtml(job.template_name || '-')}</td>
           <td><span class="${badgeClass}">${statusLabel}</span></td>
           <td><div class="actions">${actions}</div></td>
-        </tr>${aiRow}`;
+        </tr>`;
   }
 
   html += '</tbody></table>';

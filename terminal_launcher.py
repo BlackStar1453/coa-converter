@@ -131,46 +131,46 @@ def _start_marker_poll(job_manager, job_id: str, marker_file: str):
     t.start()
 
 
+def _run_claude_silent(job_manager, job_id: str, prompt: str,
+                       cwd: str, label: str = 'Silent run'):
+    """Run Claude CLI in a subprocess and update job status on completion."""
+    try:
+        result = subprocess.run(
+            [CLAUDE_CLI, '--dangerously-skip-permissions', '-p', prompt],
+            cwd=cwd, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=3600,
+        )
+        if result.returncode == 0:
+            job_manager.update_job(job_id, status='done')
+            logger.info(f'{label} complete for job {job_id}')
+        else:
+            job_manager.update_job(job_id, status='error',
+                                   error='Claude returned non-zero exit')
+    except subprocess.TimeoutExpired:
+        job_manager.update_job(job_id, status='error',
+                               error='Claude timed out (1 hour)')
+    except Exception as e:
+        logger.error(f'{label} failed for job {job_id}: {e}')
+        job_manager.update_job(job_id, status='error',
+                               error=f'{label} failed: {e}')
+
+
 def launch_verification_silent(job_manager, job_id: str, pdf_path: str,
                                template_path: str, output_path: str):
-    """Run Claude Code silently with -p flag and capture output."""
+    """Run Claude Code silently with -p flag and stream output."""
     if not CLAUDE_CLI:
         logger.error('Claude CLI not found')
         job_manager.update_job(job_id, status='error',
                                error='Claude CLI not found. Install Claude Code CLI or disable AI verification.')
         return
 
-    # No shlex.quote() here — subprocess.run() passes args directly, not via shell
     prompt = f"/coa-to-template {pdf_path} {template_path} {output_path}"
 
-    def _run():
-        try:
-            result = subprocess.run(
-                [CLAUDE_CLI, '--dangerously-skip-permissions', '-p', prompt],
-                cwd=os.path.dirname(output_path),
-                capture_output=True, text=True, timeout=300,
-            )
-            output = result.stdout or ''
-            if result.stderr:
-                output += '\n--- stderr ---\n' + result.stderr
-
-            if result.returncode == 0:
-                job_manager.update_job(job_id, status='done',
-                                       ai_output=output)
-                logger.info(f'Silent verification complete for job {job_id}')
-            else:
-                job_manager.update_job(job_id, status='error',
-                                       error='Claude returned non-zero exit',
-                                       ai_output=output)
-        except subprocess.TimeoutExpired:
-            job_manager.update_job(job_id, status='error',
-                                   error='Claude timed out (5 min)')
-        except Exception as e:
-            logger.error(f'Silent verification failed for job {job_id}: {e}')
-            job_manager.update_job(job_id, status='error',
-                                   error=f'Silent run failed: {e}')
-
-    t = threading.Thread(target=_run, daemon=True)
+    t = threading.Thread(target=_run_claude_silent,
+                         args=(job_manager, job_id, prompt,
+                               os.path.dirname(output_path),
+                               'Silent verification'),
+                         daemon=True)
     t.start()
 
 
@@ -226,7 +226,7 @@ echo "=== Fix complete. You can close this window. ==="
 def launch_error_fix_silent(job_manager, job_id: str, pdf_path: str,
                             template_path: str, output_path: str,
                             error_msg: str):
-    """Run Claude Code silently to fix reported errors."""
+    """Run Claude Code silently to fix reported errors, streaming output."""
     if not CLAUDE_CLI:
         logger.error('Claude CLI not found')
         job_manager.update_job(job_id, status='error',
@@ -236,33 +236,11 @@ def launch_error_fix_silent(job_manager, job_id: str, pdf_path: str,
     prompt = (f"/coa-fix-output {pdf_path} {template_path} {output_path} "
               f"User reported error: {error_msg}")
 
-    def _run():
-        try:
-            result = subprocess.run(
-                [CLAUDE_CLI, '--dangerously-skip-permissions', '-p', prompt],
-                cwd=os.path.dirname(output_path),
-                capture_output=True, text=True, timeout=300,
-            )
-            output = result.stdout or ''
-            if result.stderr:
-                output += '\n--- stderr ---\n' + result.stderr
-
-            if result.returncode == 0:
-                job_manager.update_job(job_id, status='done',
-                                       ai_output=output)
-            else:
-                job_manager.update_job(job_id, status='error',
-                                       error='Claude returned non-zero exit',
-                                       ai_output=output)
-        except subprocess.TimeoutExpired:
-            job_manager.update_job(job_id, status='error',
-                                   error='Claude timed out (5 min)')
-        except Exception as e:
-            logger.error(f'Error fix failed for job {job_id}: {e}')
-            job_manager.update_job(job_id, status='error',
-                                   error=f'Fix failed: {e}')
-
-    t = threading.Thread(target=_run, daemon=True)
+    t = threading.Thread(target=_run_claude_silent,
+                         args=(job_manager, job_id, prompt,
+                               os.path.dirname(output_path),
+                               'Error fix'),
+                         daemon=True)
     t.start()
 
 
