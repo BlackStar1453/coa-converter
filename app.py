@@ -154,6 +154,12 @@ class COAHandler(SimpleHTTPRequestHandler):
         elif path.startswith('/api/report-error/'):
             job_id = path.split('/api/report-error/')[1]
             self._handle_report_error(job_id)
+        elif path.startswith('/api/cancel/'):
+            job_id = path.split('/api/cancel/')[1]
+            self._handle_cancel(job_id)
+        elif path.startswith('/api/remove/'):
+            job_id = path.split('/api/remove/')[1]
+            self._handle_remove(job_id)
         elif path == '/api/focus-terminal':
             focus_terminal()
             _json_response(self, {'ok': True})
@@ -169,18 +175,6 @@ class COAHandler(SimpleHTTPRequestHandler):
                 _json_response(self, {'ok': True})
             else:
                 _json_response(self, {'error': 'Job not found'}, 404)
-        else:
-            self.send_error(404)
-
-    def do_PUT(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        if path.startswith('/api/cancel/'):
-            job_id = path.split('/api/cancel/')[1]
-            self._handle_cancel(job_id)
-        elif path.startswith('/api/remove/'):
-            job_id = path.split('/api/remove/')[1]
-            self._handle_remove(job_id)
         else:
             self.send_error(404)
 
