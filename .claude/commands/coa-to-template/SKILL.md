@@ -200,6 +200,94 @@ SUPPLIER_CHECK=$?
 python3 "$PROJECT_ROOT/converter/coa_converter.py" "$PDF_PATH" "$TEMPLATE_PATH" "$OUTPUT_PATH"
 ```
 
+### Step 3.5 Nutrition Info 网络数据补充（仅 Nutrition Info 模板执行）
+
+当检测到模板类型为 **Nutrition Info** 时，在转换完成后、验证之前，必须执行以下网络数据查询步骤。
+
+> **触发条件**：模板文件名包含 "Nutrition info" 或模板类型被识别为 nutrition。其他模板类型跳过此步骤。
+
+#### 3.5.1 识别需要查询的营养项
+
+Nutrition Info 模板中的营养数据（Calories、Protein、Fat、Total carbohydrate、Potassium、Dietary Fiber、Sodium、Calcium、Iron、Vitamin A、Vitamin C）**通常不包含在 COA PDF 中**。COA PDF 主要包含检测指标（如 Assay、Heavy Metals、Microbiology 等），而非营养成分信息。
+
+因此需要：
+1. **从 PDF 中提取产品名称**（product name）和植物学名（botanical name，如有）
+2. **确定产品的具体形态**：提取物（extract）、粉末（powder）等，这会影响营养数据
+3. **列出模板中所有营养项**：读取输出文件的营养数据表，识别需要填充的项目
+
+#### 3.5.2 网络搜索营养数据
+
+使用 WebSearch 工具搜索产品的营养成分数据：
+
+```
+搜索策略（按优先级）：
+1. 搜索 "{product_name} nutrition facts per 100g"
+2. 搜索 "{botanical_name} {product_form} nutritional information per 100g"
+3. 搜索 "{product_name} calories protein fat carbohydrate per 100g"
+```
+
+**数据来源优先级**：
+1. USDA FoodData Central (fdc.nal.usda.gov)
+2. 权威营养数据库（如 Nutritionix、MyFitnessPal）
+3. 供应商官方产品规格书
+4. 学术文献或行业标准数据
+
+**搜索要求**：
+- 数据必须是 **per 100g** 的值（与模板单位一致）
+- 如果搜索结果的单位不同，需要换算为 per 100g
+- 至少交叉验证 2 个数据源，确保数据可靠性
+- 对于植物提取物等特殊产品，注意区分原料和成品的营养数据
+
+#### 3.5.3 填充营养数据到输出文件
+
+将查询到的营养数据填充到输出 DOCX 文件的营养数据表中：
+
+```bash
+python3 -c "
+from docx import Document
+
+doc = Document('OUTPUT_PATH')
+table = doc.tables[0]  # 营养数据表
+
+# 营养数据映射（根据网络搜索结果填充）
+nutrition_data = {
+    1: ('Calories', 'VALUE kcal'),
+    2: ('Protein', 'VALUE g'),
+    3: ('Fat', 'VALUE g'),
+    4: ('Total carbohydrate', 'VALUE g'),
+    5: ('Potassium', 'VALUE mg'),
+    6: ('Dietary Fiber', 'VALUE g'),
+    7: ('Sodium', 'VALUE mg'),
+    8: ('Calcium', 'VALUE mg'),
+    9: ('Iron', 'VALUE mg'),
+    10: ('Vitamin A', 'VALUE mcg'),
+    11: ('Vitamin C', 'VALUE mcg'),
+}
+
+for row_idx, (item_name, value) in nutrition_data.items():
+    cell = table.rows[row_idx].cells[1]
+    cell.text = value
+
+doc.save('OUTPUT_PATH')
+"
+```
+
+> **注意**：填充时需保留单元格的原始格式（字体、大小、对齐方式）。实际实现中应复制原有 run 的格式属性。
+
+#### 3.5.4 记录数据来源
+
+在转换报告中记录每项营养数据的来源，便于用户核实：
+
+```
+营养数据来源：
+- 数据来源: [来源网站/数据库名称]
+- 查询产品: [product_name]
+- 查询时间: [timestamp]
+- 未找到的项目: [列出无法查询到的项目，保持模板默认值]
+```
+
+> **重要**：如果某些营养项无法通过网络查询到可靠数据，应在报告中标注，并保持该项为模板默认值或留空，**不得编造数据**。
+
 ### Step 4. AI 驱动验证与修复
 
 转换完成后，程序会自动执行内嵌验证（`verify_xlsx_output`）。**但无论内嵌验证结果如何，都必须执行以下 AI 验证步骤。**
@@ -301,7 +389,7 @@ register_supplier(
 | 6 | Composition Statement - Powder & Ratio | DOCX | 成分声明 | 替换产品名 + 选择对应比例页 |
 | 7 | Composition Statement - Standardized Material | DOCX | 成分声明 | 替换产品名 + 选择含量范围页 |
 | 8 | CS - | DOCX | 综合声明 | 替换产品名 + 原产国 |
-| 9 | Nutrition info - | DOCX | 营养信息 | 替换产品名（营养数据需手动） |
+| 9 | Nutrition info - | DOCX | 营养信息 | 替换产品名 + 网络搜索营养数据并填充（Step 3.5） |
 | 10 | Safety Data Sheet - | DOCX | 安全数据表 | 替换产品名 + 物料名 |
 
 > 详细布局规则见 `references/xlsx-templates.md` 和 `references/docx-templates.md`
