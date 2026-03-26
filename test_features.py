@@ -1437,5 +1437,114 @@ class TestFullLifecycle(unittest.TestCase):
         self.assertEqual(resp.status, 404)
 
 
+class TestReportErrorE2E(unittest.TestCase):
+    """End-to-end: upload → convert → download(v1) → report-error → fix → download(v2 updated)."""
+
+    def setUp(self):
+        self.srv = _ServerThread(port=0).start()
+        self.pdf_data = _make_minimal_pdf()
+        self.templates = _get_template_paths()
+        if not self.templates:
+            self.skipTest('Need at least 1 template')
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def _request(self, method, path, body=None, headers=None):
+        conn = self.srv.conn()
+        conn.request(method, path, body=body, headers=headers or {})
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        return resp, data
+
+    @patch('terminal_launcher.launch_error_fix_silent')
+    @patch('converter_service.convert_coa')
+    @patch('converter_service.check_supplier')
+    def test_report_error_updates_download_content(self, mock_supplier,
+                                                    mock_convert, mock_fix):
+        original_content = b'Original output v1'
+        fixed_content = b'Fixed output v2 after error report'
+
+        mock_convert.side_effect = lambda p, t, o: (
+            Path(o).write_bytes(original_content), o
+        )[1]
+        mock_supplier.return_value = {
+            'known': True, 'needs_ai_verification': False,
+        }
+
+        # 1. Upload
+        fname = f'e2e_report_{uuid.uuid4().hex[:6]}.pdf'
+        boundary = '----E2EReport'
+        body = (
+            f'------E2EReport\r\n'
+            f'Content-Disposition: form-data; name="file"; filename="{fname}"\r\n'
+            f'Content-Type: application/pdf\r\n\r\n'
+        ).encode() + self.pdf_data + b'\r\n------E2EReport--\r\n'
+        resp, data = self._request(
+            'POST', '/api/upload', body=body,
+            headers={'Content-Type': 'multipart/form-data; boundary=----E2EReport'},
+        )
+        self.assertEqual(resp.status, 201)
+        job_id = json.loads(data)[0]['id']
+
+        # 2. Convert
+        payload = json.dumps({
+            'template_path': self.templates[0],
+            'force_verify': False,
+            'claude_mode': 'silent',
+        }).encode()
+        self._request('POST', f'/api/convert/{job_id}', body=payload,
+                      headers={'Content-Type': 'application/json'})
+        time.sleep(2)
+
+        # 3. Download v1 — should get original content
+        resp, dl_data = self._request('GET', f'/api/download/{job_id}')
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(dl_data, original_content)
+
+        # 4. Capture output_path, then mock fix to overwrite it
+        resp, job_raw = self._request('GET', f'/api/jobs/{job_id}')
+        job = json.loads(job_raw)
+        output_path = job['output_path']
+        self.assertEqual(job['status'], 'done')
+
+        def fake_fix(jm, jid, pdf, tpl, out, msg):
+            """Simulate Claude fixing the file: overwrite content & set done."""
+            Path(out).write_bytes(fixed_content)
+            jm.update_job(jid, status='done')
+
+        mock_fix.side_effect = fake_fix
+
+        # 5. Report error
+        error_payload = json.dumps({
+            'message': 'Vitamin D3 value is incorrect',
+            'claude_mode': 'silent',
+        }).encode()
+        resp, data = self._request(
+            'POST', f'/api/report-error/{job_id}', body=error_payload,
+            headers={'Content-Type': 'application/json'},
+        )
+        self.assertEqual(resp.status, 200)
+        self.assertTrue(json.loads(data).get('ok'))
+        mock_fix.assert_called_once()
+
+        # 6. Verify status goes back to done after fix
+        time.sleep(0.5)
+        resp, job_raw = self._request('GET', f'/api/jobs/{job_id}')
+        job = json.loads(job_raw)
+        self.assertEqual(job['status'], 'done')
+
+        # 7. Download v2 — should get FIXED content
+        resp, dl_data = self._request('GET', f'/api/download/{job_id}')
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(dl_data, fixed_content)
+        self.assertIn('attachment', resp.getheader('Content-Disposition', ''))
+
+        # 8. Verify output_path unchanged (same file, updated in-place)
+        resp, job_raw = self._request('GET', f'/api/jobs/{job_id}')
+        self.assertEqual(json.loads(job_raw)['output_path'], output_path)
+
+
 if __name__ == '__main__':
     unittest.main()
