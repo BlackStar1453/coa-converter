@@ -206,24 +206,31 @@ python3 "$PROJECT_ROOT/converter/coa_converter.py" "$PDF_PATH" "$TEMPLATE_PATH" 
 
 > **触发条件**：模板文件名包含 "Nutrition info" 或模板类型被识别为 nutrition。其他模板类型跳过此步骤。
 
-#### 3.5.1 识别需要查询的营养项
+> ⚠️ **强制要求**：此步骤是**必须执行**的，不可跳过。Python 转换脚本输出的文件中，营养数据表的所有数值均为**模板占位符**，不代表真实数据。必须通过以下网络搜索步骤将所有占位符替换为真实营养数据后，才可进入 Step 4 验证。**严禁将模板占位符值直接保留在输出文件中。**
 
-Nutrition Info 模板中的营养数据（Calories、Protein、Fat、Total carbohydrate、Potassium、Dietary Fiber、Sodium、Calcium、Iron、Vitamin A、Vitamin C）**通常不包含在 COA PDF 中**。COA PDF 主要包含检测指标（如 Assay、Heavy Metals、Microbiology 等），而非营养成分信息。
+#### 3.5.1 解析产品名称中的物质成分
 
-因此需要：
-1. **从 PDF 中提取产品名称**（product name）和植物学名（botanical name，如有）
-2. **确定产品的具体形态**：提取物（extract）、粉末（powder）等，这会影响营养数据
-3. **列出模板中所有营养项**：读取输出文件的营养数据表，识别需要填充的项目
+COA PDF 中的产品名通常包含一个或多个物质，例如：
+- 单一物质：`Elderberry Extract Powder`
+- 多物质复合：`Elderberry + Zinc + Vitamin C`、`Calcium & Vitamin D3 Complex`
 
-#### 3.5.2 网络搜索营养数据
+**操作步骤**：
+1. 从 PDF 提取 `product_name`（产品名）和 `botanical_name`（植物学名，如有）
+2. **解析物质列表**：将产品名按 `+`、`/`、`&`、`,` 拆分，识别各独立物质
+   - 例：`"Elderberry Extract + Zinc + Vitamin C"` → `["Elderberry Extract", "Zinc", "Vitamin C"]`
+   - 例：`"Calcium & Vitamin D3 Complex"` → `["Calcium", "Vitamin D3"]`
+   - 单物质产品无需拆分，直接作为唯一搜索对象
+3. 确认每种物质的形态（提取物 extract、粉末 powder、原料 raw 等），形态会影响营养数据
 
-使用 WebSearch 工具搜索产品的营养成分数据：
+#### 3.5.2 对每种物质分别进行网络搜索
+
+**对 3.5.1 中识别出的每一种物质**，使用 WebSearch 工具分别搜索其营养成分数据：
 
 ```
-搜索策略（按优先级）：
-1. 搜索 "{product_name} nutrition facts per 100g"
-2. 搜索 "{botanical_name} {product_form} nutritional information per 100g"
-3. 搜索 "{product_name} calories protein fat carbohydrate per 100g"
+每种物质的搜索策略（按优先级）：
+1. 搜索 "{物质名} nutrition facts per 100g"
+2. 搜索 "{物质名} nutritional information calories protein fat carbohydrate"
+3. 搜索 "USDA {物质名} nutritional value per 100g"
 ```
 
 **数据来源优先级**：
@@ -233,23 +240,26 @@ Nutrition Info 模板中的营养数据（Calories、Protein、Fat、Total carbo
 4. 学术文献或行业标准数据
 
 **搜索要求**：
-- 数据必须是 **per 100g** 的值（与模板单位一致）
-- 如果搜索结果的单位不同，需要换算为 per 100g
-- 至少交叉验证 2 个数据源，确保数据可靠性
-- 对于植物提取物等特殊产品，注意区分原料和成品的营养数据
+- 数据必须是 **per 100g** 的值（与模板单位一致）；若单位不同，需换算
+- 每种物质至少交叉验证 2 个数据源，确保可靠性
+- 对于植物提取物等特殊产品，注意区分原料与成品的营养数据
+- **多物质产品**：若产品含多种物质且无法确定各物质比例，以**主要物质**（产品名第一个成分）的营养数据为基准填入表格，并在 3.5.4 的数据来源报告中注明
 
 #### 3.5.3 填充营养数据到输出文件
 
-将查询到的营养数据填充到输出 DOCX 文件的营养数据表中：
+将网络搜索查询到的**真实数值**填充到输出 DOCX 文件的营养数据表中。
+
+> ⚠️ **VALUE 必须替换为搜索到的真实数字**，不得使用任何占位符或模板中原有的值。
 
 ```bash
 python3 -c "
 from docx import Document
+from copy import deepcopy
 
 doc = Document('OUTPUT_PATH')
 table = doc.tables[0]  # 营养数据表
 
-# 营养数据映射（根据网络搜索结果填充）
+# 营养数据映射（将 VALUE 替换为网络搜索到的真实数值）
 nutrition_data = {
     1: ('Calories', 'VALUE kcal'),
     2: ('Protein', 'VALUE g'),
@@ -266,13 +276,18 @@ nutrition_data = {
 
 for row_idx, (item_name, value) in nutrition_data.items():
     cell = table.rows[row_idx].cells[1]
-    cell.text = value
+    # 保留原有格式，只更新文本内容
+    for para in cell.paragraphs:
+        for run in para.runs:
+            run.text = ''
+    if cell.paragraphs[0].runs:
+        cell.paragraphs[0].runs[0].text = value
+    else:
+        cell.paragraphs[0].text = value
 
 doc.save('OUTPUT_PATH')
 "
 ```
-
-> **注意**：填充时需保留单元格的原始格式（字体、大小、对齐方式）。实际实现中应复制原有 run 的格式属性。
 
 #### 3.5.4 记录数据来源
 
@@ -281,12 +296,11 @@ doc.save('OUTPUT_PATH')
 ```
 营养数据来源：
 - 数据来源: [来源网站/数据库名称]
-- 查询产品: [product_name]
-- 查询时间: [timestamp]
-- 未找到的项目: [列出无法查询到的项目，保持模板默认值]
+- 查询产品/物质: [每种物质名称及对应来源]
+- 未找到的项目: [列出无法查询到的项目及原因]
 ```
 
-> **重要**：如果某些营养项无法通过网络查询到可靠数据，应在报告中标注，并保持该项为模板默认值或留空，**不得编造数据**。
+> **重要**：如果某些营养项无法通过网络查询到可靠数据，应在报告中标注，并将该项留空（清空单元格），**不得保留模板占位符值，也不得编造数据**。
 
 ### Step 4. AI 驱动验证与修复
 
