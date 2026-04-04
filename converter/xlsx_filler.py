@@ -173,7 +173,7 @@ def _fill_coa_packing(ws, coa: COAData, layout: TemplateLayout):
         logger.info('[XLSX填充-包装] PDF 无包装信息，已清空模板默认值')
         return
 
-    parts = re.split(r'(?:store\s)', coa.packing_storage, maxsplit=1, flags=re.IGNORECASE)
+    parts = re.split(r'(?:Store\s|Storage[:\s])', coa.packing_storage, maxsplit=1, flags=re.IGNORECASE)
 
     if layout.packing_position:
         packing_text = parts[0].strip().rstrip('.') if len(parts) >= 1 else ""
@@ -190,7 +190,12 @@ def _fill_coa_packing(ws, coa: COAData, layout: TemplateLayout):
             logger.info(f'[XLSX填充-包装] {ref or layout.packing_position.row} = (空，已清除模板默认值)')
 
     if layout.storage_position and len(parts) >= 2:
-        storage_text = "Store " + parts[1].strip()
+        raw_storage = parts[1].strip()
+        # 根据原文还原前缀: 如果原文含 "Storage" 则用 "Storage "，否则用 "Store "
+        if re.search(r'Storage', coa.packing_storage, re.IGNORECASE):
+            storage_text = "Storage " + raw_storage
+        else:
+            storage_text = "Store " + raw_storage
         ref = layout.storage_position.cell_ref
         if ref:
             ws[ref] = storage_text
@@ -496,7 +501,7 @@ def verify_xlsx_output(coa: COAData, layout: TemplateLayout, output_path: str,
     # --- 验证 Packing & Storage ---
     if layout.packing_position:
         if coa.packing_storage:
-            parts = re.split(r'(?:store\s)', coa.packing_storage, maxsplit=1, flags=re.IGNORECASE)
+            parts = re.split(r'(?:Store\s|Storage[:\s])', coa.packing_storage, maxsplit=1, flags=re.IGNORECASE)
             expected_packing = parts[0].strip().rstrip('.') if parts else ""
         else:
             expected_packing = ""
@@ -534,8 +539,15 @@ def verify_xlsx_output(coa: COAData, layout: TemplateLayout, output_path: str,
 
     if layout.storage_position:
         if coa.packing_storage:
-            parts = re.split(r'(?:store\s)', coa.packing_storage, maxsplit=1, flags=re.IGNORECASE)
-            expected_storage = ("Store " + parts[1].strip()) if len(parts) >= 2 else ""
+            parts = re.split(r'(?:Store\s|Storage[:\s])', coa.packing_storage, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) >= 2:
+                raw = parts[1].strip()
+                if re.search(r'Storage', coa.packing_storage, re.IGNORECASE):
+                    expected_storage = "Storage " + raw
+                else:
+                    expected_storage = "Store " + raw
+            else:
+                expected_storage = ""
         else:
             expected_storage = ""
 

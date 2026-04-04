@@ -21,6 +21,7 @@ _TEMPLATE_HEADER_ALIASES = {
     "product name": "product_name",
     "botanical latin name": "botanical_name",
     "botanical name": "botanical_name",
+    "botanical source": "botanical_name",
     "plant part": "plant_part",
     "part used": "plant_part",
     "batch number": "batch_number",
@@ -66,14 +67,18 @@ _TEMPLATE_ITEM_LABELS = {
     "ph": "ph",
     "ph value": "ph",
     "heavy metals": "heavy_metals",
-    "lead": "lead",
-    "lead (pb)": "lead",
-    "arsenic": "arsenic",
-    "arsenic (as)": "arsenic",
-    "cadmium": "cadmium",
-    "cadmium (cd)": "cadmium",
-    "mercury": "mercury",
-    "mercury (hg)": "mercury",
+    "lead": "pb",
+    "lead (pb)": "pb",
+    "pb": "pb",
+    "arsenic": "as",
+    "arsenic (as)": "as",
+    "as": "as",
+    "cadmium": "cd",
+    "cadmium (cd)": "cd",
+    "cd": "cd",
+    "mercury": "hg",
+    "mercury (hg)": "hg",
+    "hg": "hg",
     "pesticide residues": "pesticide",
     "pesticides": "pesticide",
     "total plate count": "tpc",
@@ -255,7 +260,7 @@ def _detect_coa_layout(cell_texts: Dict[Tuple[int, int], str], layout: TemplateL
         text_lower = text.lower().strip()
         # 检查是否是已知的头部标签
         for alias, std_key in _TEMPLATE_HEADER_ALIASES.items():
-            if alias in text_lower or text_lower in alias:
+            if text_lower == alias or alias in text_lower:
                 # 标签在 (r, c)，值在同一行的右侧
                 value_col = c + 2 if c == 1 else c + 1  # A→C 或 E→F
                 # 查找实际有值的列

@@ -81,6 +81,7 @@ class COAData:
     microbiology_items: List[Dict[str, str]] = field(default_factory=list)
     packing_storage: str = ""
     unmapped_items: List[Dict[str, str]] = field(default_factory=list)
+    pdf_only_items: List[Dict[str, str]] = field(default_factory=list)  # PDF特有项（模板无对应行）
     warnings: List[str] = field(default_factory=list)
 
 
@@ -168,12 +169,28 @@ ITEM_NAME_NORMALIZE = {
     "mercury(hg)": "hg",
     "mercury": "hg",
     "hg": "hg",
-    "pesticides residue": "pesticides",
-    "pesticide residue": "pesticides",
-    "pesticide residues": "pesticides",
-    "pesticides": "pesticides",
+    "pesticides residue": "pesticide",
+    "pesticide residue": "pesticide",
+    "pesticide residues": "pesticide",
+    "pesticides": "pesticide",
+    "pesticide": "pesticide",
     "foreign matter": "foreign_matter",
     "elemental impurities": "elemental_impurities",
+    # Additional analytical items
+    "specific gravity": "specific_gravity",
+    "tapped density": "tapped_density",
+    "loose density": "bulk_density",
+    "ph": "ph",
+    "ph value": "ph",
+    "solvent residue": "solvent_residue",
+    "solvents residue": "solvent_residue",
+    "residual solvents": "solvent_residue",
+    "solvent residues": "solvent_residue",
+    "aflatoxins": "aflatoxins",
+    "aflatoxin": "aflatoxins",
+    "benzo(a)pyrene": "benzo_pyrene",
+    "benzo a pyrene": "benzo_pyrene",
+    "pah4": "pah4",
     # Microbiology
     "total plate count": "tpc",
     "total aerobic count": "tpc",
@@ -200,11 +217,12 @@ ITEM_NAME_NORMALIZE = {
     "s. aureus": "s_aureus",
     "pseudomonas aeruginosa": "pseudomonas",
     "bile-tolerant gram-negative bacteria count": "bile_tolerant",
-    "coliform": "coliform",
+    "coliform": "coliforms",
+    "coliforms": "coliforms",
 }
 
 # PDF特有的检测项（XLSX模板中没有对应行）
-PDF_ONLY_ITEMS = {"extract_ratio", "identification", "bulk_density", "pesticides", "coliform",
+PDF_ONLY_ITEMS = {"extract_ratio", "identification",
                    "foreign_matter", "elemental_impurities", "pseudomonas", "bile_tolerant",
                    "sieve_40"}
 
@@ -279,8 +297,8 @@ def convert_date(date_str: str) -> str:
         if month:
             return f"{year}.{month}.{day}"
 
-    # 格式: "Feb-2028" 或 "Mar-2025" (Month-Year only, no day)
-    m = re.match(r'^([A-Za-z]+)-(\d{4})$', date_str)
+    # 格式: "Feb-2028" 或 "Mar-2025" 或 "Mar.2025" (Month-Year only, no day)
+    m = re.match(r'^([A-Za-z]+)[.\-](\d{4})$', date_str)
     if m:
         month_str = m.group(1).lower()
         year = m.group(2)
@@ -295,10 +313,28 @@ def convert_date(date_str: str) -> str:
     if m:
         return f"{m.group(1)}.{m.group(2).zfill(2)}.{m.group(3).zfill(2)}"
 
-    # 格式: "02/03/2026" (MM/DD/YYYY)
+    # 格式: "2026/02/03" (YYYY/MM/DD)
+    m = re.match(r'^(\d{4})/(\d{1,2})/(\d{1,2})$', date_str)
+    if m:
+        return f"{m.group(1)}.{m.group(2).zfill(2)}.{m.group(3).zfill(2)}"
+
+    # 格式: "02/03/2026" (MM/DD/YYYY — 北美常见格式)
     m = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4})$', date_str)
     if m:
         return f"{m.group(3)}.{m.group(1).zfill(2)}.{m.group(2).zfill(2)}"
+
+    # 格式: "03.02.2026" (DD.MM.YYYY — 欧洲常见格式，日>12 可区分)
+    m = re.match(r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$', date_str)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), m.group(3)
+        if d > 12:
+            # 明确是 DD.MM.YYYY
+            return f"{y}.{str(mo).zfill(2)}.{str(d).zfill(2)}"
+        elif mo > 12:
+            # 明确是 MM.DD.YYYY
+            return f"{y}.{str(d).zfill(2)}.{str(mo).zfill(2)}"
+        # 两者都 ≤12 时无法区分，默认 DD.MM.YYYY（欧洲格式更常见于COA）
+        return f"{y}.{str(mo).zfill(2)}.{str(d).zfill(2)}"
 
     logger.warning(f'[日期转换] 无法识别日期格式: "{date_str}"，保持原样')
     return date_str
@@ -415,7 +451,8 @@ def extract_from_pdf(pdf_path: str) -> COAData:
     logger.info(f'[提取] 完成 - 头部字段: {len(coa.header)}, '
                 f'分析项: {len(coa.analytical_items)}, '
                 f'微生物项: {len(coa.microbiology_items)}, '
-                f'未映射项: {len(coa.unmapped_items)}')
+                f'PDF特有项: {len(coa.pdf_only_items)}, '
+                f'未识别项: {len(coa.unmapped_items)}')
     return coa
 
 
@@ -526,12 +563,12 @@ def _parse_table_rows(rows: List, coa: COAData):
 
         # PDF特有项（XLSX模板中没有对应行），记录但不报错
         if item_key in PDF_ONLY_ITEMS:
-            coa.unmapped_items.append(item_dict)
-            logger.info(f'[提取] PDF特有项(无XLSX映射): {cells[0]} = {item_dict.get("result", "")}')
+            coa.pdf_only_items.append(item_dict)
+            logger.info(f'[提取] PDF���有项(无模板映射): {cells[0]} = {item_dict.get("result", "")}')
             continue
 
         # 分配到对应的section
-        if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus"):
+        if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus", "coliforms"):
             coa.microbiology_items.append(item_dict)
             current_section = "microbiology"
         else:
@@ -545,11 +582,10 @@ def _parse_header_row(cells: List[str], coa: COAData):
     pairs = []
     i = 0
     while i < len(cells) - 1:
-        if cells[i] and cells[i + 1]:
+        if cells[i]:
+            # 即使 value 为空也配对，保持 key-value 对齐
             pairs.append((cells[i], cells[i + 1]))
             i += 2
-        elif cells[i]:
-            i += 1
         else:
             i += 1
 
@@ -559,8 +595,8 @@ def _parse_header_row(cells: List[str], coa: COAData):
         matched_key = None
         for alias, std_key in HEADER_FIELD_ALIASES.items():
             alias_nospace = re.sub(r'\s+', '', alias)
-            if alias in key_lower or key_lower in alias or \
-               alias_nospace in key_nospace or key_nospace in alias_nospace:
+            if key_lower == alias or alias in key_lower or \
+               alias_nospace == key_nospace or alias_nospace in key_nospace:
                 matched_key = std_key
                 break
 
@@ -799,11 +835,11 @@ def _extract_by_words(pdf_path: str, coa: COAData):
                     continue
 
                 if item_key in PDF_ONLY_ITEMS:
-                    coa.unmapped_items.append(item_dict)
-                    logger.info(f'[提取-Words] PDF特有项: {cells[0]} = {item_dict.get("result", "")}')
+                    coa.pdf_only_items.append(item_dict)
+                    logger.info(f'[提取-Words] PDF特有项(无模板映射): {cells[0]} = {item_dict.get("result", "")}')
                     continue
 
-                if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus"):
+                if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus", "coliforms"):
                     coa.microbiology_items.append(item_dict)
                     current_section = "microbiology"
                 else:
@@ -960,8 +996,8 @@ def _parse_header_zone(header_rows: list, coa: COAData):
             matched_key = None
             for alias, std_key in HEADER_FIELD_ALIASES.items():
                 alias_nospace = re.sub(r'\s+', '', alias)
-                if alias in key_lower or key_lower in alias or \
-                   alias_nospace in key_nospace or key_nospace in alias_nospace:
+                if key_lower == alias or alias in key_lower or \
+                   alias_nospace == key_nospace or alias_nospace in key_nospace:
                     matched_key = std_key
                     break
 
@@ -1005,8 +1041,8 @@ def _parse_header_from_words(row_words: list, coa: COAData):
         matched_key = None
         for alias, std_key in HEADER_FIELD_ALIASES.items():
             alias_nospace = re.sub(r'\s+', '', alias)
-            if alias in key_lower or key_lower in alias or \
-               alias_nospace in key_nospace or key_nospace in alias_nospace:
+            if key_lower == alias or alias in key_lower or \
+               alias_nospace == key_nospace or alias_nospace in key_nospace:
                 matched_key = std_key
                 break
 
@@ -1136,10 +1172,14 @@ def validate_coa(coa: COAData) -> List[str]:
     if missing_critical:
         warnings.append(f'缺少关键检测项: {", ".join(missing_critical)}')
 
-    # 报告未映射项
+    # 报告未映射项（区分真正未识别和PDF特有项）
     if coa.unmapped_items:
         names = [item["item"] for item in coa.unmapped_items]
-        warnings.append(f'未映射的检测项({len(names)}): {", ".join(names)}')
+        warnings.append(f'未识别的检测项({len(names)}): {", ".join(names)}')
+
+    if coa.pdf_only_items:
+        names = [item["item"] for item in coa.pdf_only_items]
+        logger.info(f'[验证] PDF特有项（模板范围外，非错误）({len(names)}): {", ".join(names)}')
 
     return warnings
 

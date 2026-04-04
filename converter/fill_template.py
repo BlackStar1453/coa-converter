@@ -394,7 +394,7 @@ def _fill_docx(data: dict, layout: TemplateLayout, template_path: str, output_pa
     elif layout.template_type == 'sds':
         _fill_sds_docx(doc, product_name, botanical_name)
     elif layout.template_type in ('composition_powder', 'composition_standard'):
-        _fill_composition_docx(doc, product_name)
+        _fill_composition_docx(doc, product_name, data=data, layout=layout)
     else:
         _replace_product_name_in_paragraphs(doc, product_name)
 
@@ -495,14 +495,57 @@ def _fill_sds_docx(doc, product_name: str, botanical_name: str):
                             run.font.highlight_color = None
 
 
-def _fill_composition_docx(doc, product_name: str):
+def _select_composition_page_from_json(data: dict, layout: TemplateLayout):
+    """根据 JSON 数据选择 Composition 模板的目标页面索引"""
+    assay = data.get("assay")
+    if not assay:
+        return None
+    if layout.template_type == 'composition_powder':
+        ratio_map = {'4:1': 0, '10:1': 1, '20:1': 2, '50:1': 3, '100:1': 4}
+        for field in ('result', 'specification'):
+            val = assay.get(field, '').strip()
+            if val in ratio_map:
+                return ratio_map[val]
+        return None
+    elif layout.template_type == 'composition_standard':
+        result_text = assay.get('result', '')
+        m = re.search(r'([\d.]+)\s*%', result_text)
+        if m:
+            pct = float(m.group(1))
+            if pct < 50:
+                return 0
+            elif pct <= 80:
+                return 1
+            else:
+                return 2
+        return None
+    return None
+
+
+def _fill_composition_docx(doc, product_name: str, data: dict = None, layout: TemplateLayout = None):
     """Composition Statement"""
     from docx.shared import RGBColor
 
     if not product_name:
         return
+
+    target_page = None
+    if data and layout:
+        target_page = _select_composition_page_from_json(data, layout)
+        if target_page is not None:
+            logger.info(f'[填充-Composition] 选择目标页面: {target_page}')
+
     # 替换段落中的产品名
-    for para in doc.paragraphs:
+    product_para_indices = []
+    for i, para in enumerate(doc.paragraphs):
+        m = re.search(r'our product,(.+?),\s*is', para.text)
+        if m:
+            product_para_indices.append(i)
+
+    for idx, para_idx in enumerate(product_para_indices):
+        if target_page is not None and idx != target_page:
+            continue
+        para = doc.paragraphs[para_idx]
         m = re.search(r'our product,(.+?),\s*is', para.text)
         if m:
             old_segment = m.group(1)
@@ -510,15 +553,17 @@ def _fill_composition_docx(doc, product_name: str):
                 old_full = m.group(0)
                 new_full = f'our product, {product_name} ,is'
                 if not _replace_in_paragraph(para, old_full, new_full):
-                    # Fallback: 重建 runs
                     new_text = para.text.replace(old_full, new_full)
                     if para.runs:
                         para.runs[0].text = new_text
                         for run in para.runs[1:]:
                             run.text = ''
+
     # 填充表格
     for ti, table in enumerate(doc.tables):
         if len(table.rows) < 2:
+            continue
+        if target_page is not None and ti != target_page:
             continue
         row1 = table.rows[1]
         if len(row1.cells) >= 1:

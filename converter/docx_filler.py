@@ -218,6 +218,43 @@ def _fill_sds(doc, coa: COAData, layout: TemplateLayout):
 
 # ============ Composition Statement 模板 ============
 
+def _select_composition_page(coa: COAData, layout: TemplateLayout) -> Optional[int]:
+    """根据 COA 数据选择 Composition 模板的目标页面/表格索引。
+    返回 None 表示无法确定，应填充所有页面。
+    """
+    if layout.template_type == 'composition_powder':
+        # Powder & Ratio 模板：6页，按比例选择
+        # 4:1→0, 10:1→1, 20:1→2, 50:1→3, 100:1→4, No Maltodextrin→5
+        ratio_map = {'4:1': 0, '10:1': 1, '20:1': 2, '50:1': 3, '100:1': 4}
+        if coa.assay:
+            ratio_val = coa.assay.get('result', '').strip()
+            if ratio_val in ratio_map:
+                return ratio_map[ratio_val]
+            # 尝试从 specification 中查找
+            spec_val = coa.assay.get('specification', '').strip()
+            if spec_val in ratio_map:
+                return ratio_map[spec_val]
+        return None
+
+    elif layout.template_type == 'composition_standard':
+        # Standardized Material 模板：3页，按含量范围选择
+        # <50%→0, 50-80%→1, 80-99%→2
+        if coa.assay:
+            result_text = coa.assay.get('result', '')
+            m = re.search(r'([\d.]+)\s*%', result_text)
+            if m:
+                pct = float(m.group(1))
+                if pct < 50:
+                    return 0
+                elif pct <= 80:
+                    return 1
+                else:
+                    return 2
+        return None
+
+    return None
+
+
 def _fill_composition(doc, coa: COAData, layout: TemplateLayout):
     """填充 Composition Statement 模板 — 替换段落和表格中的产品名"""
     product_name = coa.header.get('product_name', '')
@@ -225,30 +262,46 @@ def _fill_composition(doc, coa: COAData, layout: TemplateLayout):
         logger.warning('[DOCX填充-Composition] 产品名为空，跳过填充')
         return
 
+    target_page = _select_composition_page(coa, layout)
+    if target_page is not None:
+        logger.info(f'[DOCX填充-Composition] 选择目标页面: {target_page}')
+    else:
+        logger.info('[DOCX填充-Composition] 无法确定目标页面，填充所有页面')
+
     # 1. 替换段落中 "our product, XXX, is" 的产品名
-    #    模板中占位符可能是空格或旧示例名，通用 regex 匹配不到，需要专门处理
-    #    使用包含上下文的唯一匹配串来避免替换到段落中其他位置的同名文本
-    for para in doc.paragraphs:
+    #    如果确定了目标页面，只替换对应段落；否则替换所有匹配段落
+    product_para_indices = []
+    for i, para in enumerate(doc.paragraphs):
         full_text = para.text
         m = re.search(r'our product,(.+?),\s*is', full_text)
         if m:
-            old_segment = m.group(1)  # 两个逗号之间的内容（可能是空格或旧名称）
+            product_para_indices.append(i)
+
+    for idx, para_idx in enumerate(product_para_indices):
+        if target_page is not None and idx != target_page:
+            continue
+        para = doc.paragraphs[para_idx]
+        full_text = para.text
+        m = re.search(r'our product,(.+?),\s*is', full_text)
+        if m:
+            old_segment = m.group(1)
             if old_segment.strip() == product_name:
                 continue
-            # 使用包含上下文的完整匹配串进行替换，避免歧义
-            old_full = m.group(0)  # e.g. "our product,         ,is"
+            old_full = m.group(0)
             new_full = f'our product, {product_name} ,is'
             if _replace_in_paragraph(para, old_full, new_full):
-                logger.info(f'[DOCX填充-Composition] 段落产品名: "{old_segment.strip()}" → "{product_name}"')
+                logger.info(f'[DOCX填充-Composition] 段落[{para_idx}] 产品名: "{old_segment.strip()}" → "{product_name}"')
             else:
-                # 回退：直接重写 runs，但也使用完整上下文
                 _rebuild_paragraph_with_product(para, old_full, new_full)
-                logger.info(f'[DOCX填充-Composition] 段落产品名(重建): "{old_segment.strip()}" → "{product_name}"')
+                logger.info(f'[DOCX填充-Composition] 段落[{para_idx}] 产品名(重建): "{old_segment.strip()}" → "{product_name}"')
 
     # 2. 填充表格
     for ti, table in enumerate(doc.tables):
         if len(table.rows) < 2:
             continue
+        if target_page is not None and ti != target_page:
+            continue
+
         row1 = table.rows[1]
 
         # Row[1] Col[0] = 产品名
@@ -268,7 +321,6 @@ def _fill_composition(doc, coa: COAData, layout: TemplateLayout):
     red_color = RGBColor(0xEE, 0x00, 0x00)
     red_cleared = 0
     for para in doc.paragraphs:
-        # 跳过标题段落，保留比例文本（如 "10:1", "No Maltodextrin Used"）
         if para.style.name == 'Title':
             continue
         for run in para.runs:
