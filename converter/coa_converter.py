@@ -81,7 +81,6 @@ class COAData:
     microbiology_items: List[Dict[str, str]] = field(default_factory=list)
     packing_storage: str = ""
     unmapped_items: List[Dict[str, str]] = field(default_factory=list)
-    pdf_only_items: List[Dict[str, str]] = field(default_factory=list)  # PDF特有项（模板无对应行）
     warnings: List[str] = field(default_factory=list)
 
 
@@ -128,7 +127,6 @@ ITEM_NAME_NORMALIZE = {
     # Assay相关
     "assay": "assay",
     "ratio": "assay",
-    # PDF特有项（XLSX无对应行，识别后归入unmapped）
     "extract ratio": "extract_ratio",
     "identification": "identification",
     # Analytical Data
@@ -220,11 +218,6 @@ ITEM_NAME_NORMALIZE = {
     "coliform": "coliforms",
     "coliforms": "coliforms",
 }
-
-# PDF特有的检测项（XLSX模板中没有对应行）
-PDF_ONLY_ITEMS = {"extract_ratio", "identification",
-                   "foreign_matter", "elemental_impurities", "pseudomonas", "bile_tolerant",
-                   "sieve_40"}
 
 # 注意：XLSX_ROW_KEYS 已移除，改用 template_detector 自动检测行号
 
@@ -451,7 +444,6 @@ def extract_from_pdf(pdf_path: str) -> COAData:
     logger.info(f'[提取] 完成 - 头部字段: {len(coa.header)}, '
                 f'分析项: {len(coa.analytical_items)}, '
                 f'微生物项: {len(coa.microbiology_items)}, '
-                f'PDF特有项: {len(coa.pdf_only_items)}, '
                 f'未识别项: {len(coa.unmapped_items)}')
     return coa
 
@@ -561,14 +553,8 @@ def _parse_table_rows(rows: List, coa: COAData):
             logger.info(f'[提取] Extract Ratio 映射为 Assay: {coa.assay}')
             continue
 
-        # PDF特有项（XLSX模板中没有对应行），记录但不报错
-        if item_key in PDF_ONLY_ITEMS:
-            coa.pdf_only_items.append(item_dict)
-            logger.info(f'[提取] PDF���有项(无模板映射): {cells[0]} = {item_dict.get("result", "")}')
-            continue
-
         # 分配到对应的section
-        if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus", "coliforms"):
+        if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus", "coliforms", "pseudomonas", "bile_tolerant"):
             coa.microbiology_items.append(item_dict)
             current_section = "microbiology"
         else:
@@ -834,12 +820,7 @@ def _extract_by_words(pdf_path: str, coa: COAData):
                     logger.info(f'[提取-Words] Extract Ratio 映射为 Assay: {coa.assay}')
                     continue
 
-                if item_key in PDF_ONLY_ITEMS:
-                    coa.pdf_only_items.append(item_dict)
-                    logger.info(f'[提取-Words] PDF特有项(无模板映射): {cells[0]} = {item_dict.get("result", "")}')
-                    continue
-
-                if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus", "coliforms"):
+                if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus", "coliforms", "pseudomonas", "bile_tolerant"):
                     coa.microbiology_items.append(item_dict)
                     current_section = "microbiology"
                 else:
@@ -1176,10 +1157,6 @@ def validate_coa(coa: COAData) -> List[str]:
     if coa.unmapped_items:
         names = [item["item"] for item in coa.unmapped_items]
         warnings.append(f'未识别的检测项({len(names)}): {", ".join(names)}')
-
-    if coa.pdf_only_items:
-        names = [item["item"] for item in coa.pdf_only_items]
-        logger.info(f'[验证] PDF特有项（模板范围外，非错误）({len(names)}): {", ".join(names)}')
 
     return warnings
 
