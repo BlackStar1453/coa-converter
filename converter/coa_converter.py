@@ -134,7 +134,10 @@ ITEM_NAME_NORMALIZE = {
     "description": "appearance",
     "color": "color",
     "odor": "odor",
+    "odor&taste": "odor",
+    "odor & taste": "odor",
     "taste": "taste",
+    "plant part used": "plant_part_used",
     "loss on drying": "lod",
     "moisture": "lod",
     "residue on ignition": "ash",
@@ -428,9 +431,27 @@ def extract_from_pdf(pdf_path: str) -> COAData:
         logger.error(f'[提取] pdfplumber提取失败: {e}，尝试PyMuPDF降级')
         _fallback_pymupdf(pdf_path, coa)
 
-    # 检查表格提取是否有效——如果头部或数据全为空，降级到words策略
-    has_data = bool(coa.header) and (bool(coa.analytical_items) or bool(coa.microbiology_items) or bool(coa.assay))
-    if not has_data:
+    # 检查表格提取是否有效
+    has_items = bool(coa.analytical_items) or bool(coa.microbiology_items) or bool(coa.assay)
+    has_header = bool(coa.header)
+
+    if has_items and not has_header:
+        # 表格数据已拿到，但头部字段缺失（头部可能不在表格内），从全文补充
+        logger.info('[提取] 表格数据有效但头部缺失，从全文补充头部字段')
+        try:
+            import fitz
+            doc = fitz.open(pdf_path)
+            for page in doc:
+                full_text = page.get_text("text")
+                _parse_header_from_text(full_text, coa)
+            # 产品名可能作为独立标题行出现（无标签前缀）
+            if 'product_name' not in coa.header:
+                _extract_product_name_from_text(pdf_path, coa)
+            doc.close()
+        except Exception as e:
+            logger.warning(f'[提取] 全文补充头部失败: {e}')
+    elif not has_items:
+        # 数据项也为空，完全降级到words策略
         logger.info('[提取] 表格提取数据不足，降级到基于word位置的策略')
         coa_words = COAData()
         try:
@@ -448,10 +469,38 @@ def extract_from_pdf(pdf_path: str) -> COAData:
     return coa
 
 
+def _split_multiline_rows(rows: List) -> List:
+    """将包含换行符的合并单元格拆分为独立行。
+    某些PDF的表格结构会将多个检测项合并在同一个单元格中（用\\n分隔），
+    需要按行拆分后分别处理。"""
+    expanded = []
+    for row in rows:
+        if row is None:
+            expanded.append(row)
+            continue
+        # 检查是否有任何单元格包含换行符
+        cells_str = [str(c) if c else "" for c in row]
+        max_lines = max((s.count('\n') + 1 for s in cells_str), default=1)
+        if max_lines <= 1:
+            expanded.append(row)
+            continue
+        # 按换行拆分每个单元格，逐行组装新行
+        split_cols = [s.split('\n') for s in cells_str]
+        for i in range(max_lines):
+            new_row = []
+            for col_lines in split_cols:
+                new_row.append(col_lines[i] if i < len(col_lines) else "")
+            expanded.append(new_row)
+    return expanded
+
+
 def _parse_table_rows(rows: List, coa: COAData):
     """解析表格行数据，分类到COAData各字段"""
     current_section = "general"  # general / analytical / microbiology / footer
     found_data_header = False
+
+    # 拆分合并单元格中的多行数据
+    rows = _split_multiline_rows(rows)
 
     for row in rows:
         if row is None:
@@ -839,10 +888,13 @@ def _parse_header_from_text(full_text: str, coa: COAData):
     for line in lines:
         line_upper = line.strip().upper()
         # 检测头部开始
-        if any(kw in line_upper for kw in ['PRODUCT NAME', 'PRODUCT:', 'BATCH NUMBER', 'BATCH NO']):
+        if any(kw in line_upper for kw in ['PRODUCT NAME', 'PRODUCT:', 'BATCH NUMBER', 'BATCH NO', 'BOTANICAL']):
             in_header = True
-        # 检测头部结束
-        if 'SPECIFICATION' in line_upper or 'ITEMS OF ANALYSIS' in line_upper:
+        # 检测头部结束（表格数据区域开始）
+        if any(kw in line_upper for kw in ['SPECIFICATION', 'ITEMS OF ANALYSIS', 'ITEM STANDARD']):
+            break
+        # "Item" 单独出现在行首作为表头标记
+        if line_upper.strip() == 'ITEM' or re.match(r'^ITEM\s+(STANDARD|SPECIFICATION|TEST)', line_upper):
             break
         if in_header:
             header_text += " " + line.strip()
@@ -875,6 +927,7 @@ def _parse_header_from_text(full_text: str, coa: COAData):
         (r'Issue\s*Date\s*', 'issue_date'),
         (r'Solvent\s*', 'solvent'),
         # 非映射key（仅作为值边界标记，用 _ 前缀区分）
+        (r'Report\s*Date\s*', '_report_date'),
         (r'T\.?\s*R\.?\s*No\.?\s*', '_tr_no'),
         (r'Category\s*', '_category'),
         (r'GMO\s*Status\s*', '_gmo_status'),
@@ -906,6 +959,47 @@ def _parse_header_from_text(full_text: str, coa: COAData):
         if value:
             coa.header[std_key] = value
             logger.info(f'[提取-Text-头部] {std_key} = {value}')
+
+
+def _extract_product_name_from_text(pdf_path: str, coa: COAData):
+    """从PDF中提取无标签前缀的产品名。
+    某些PDF中产品名作为独立标题行出现在"CERTIFICATE OF ANALYSIS"之后、
+    "Botanical Name"或"Batch No"之前。使用word的y坐标定位。"""
+    try:
+        import fitz
+        doc = fitz.open(pdf_path)
+        page = doc[0]
+        words = page.get_text('words')
+        doc.close()
+
+        # 先扫描所有 words 找到关键锚点的 y 坐标（不依赖遍历顺序）
+        coa_y = None      # "CERTIFICATE OF ANALYSIS" 行底部
+        first_key_y = None  # 第一个 header key（Botanical/Batch/Product Name）行顶部
+        for w in words:
+            text_upper = w[4].upper()
+            if text_upper == 'CERTIFICATE':
+                coa_y = w[3]  # y1
+            if text_upper in ('BOTANICAL', 'BATCH', 'PRODUCT'):
+                if first_key_y is None or w[1] < first_key_y:
+                    first_key_y = w[1]  # y0，取最靠上的
+
+        if coa_y is None or first_key_y is None or first_key_y <= coa_y:
+            return
+
+        # 收集 CERTIFICATE 和第一个 header key 之间的文本
+        name_words = []
+        for w in words:
+            if w[1] >= coa_y and w[3] <= first_key_y:
+                name_words.append(w)
+
+        if name_words:
+            name_words.sort(key=lambda w: (w[1], w[0]))
+            product_name = ' '.join(w[4] for w in name_words).strip()
+            if product_name and len(product_name) >= 2:
+                coa.header['product_name'] = product_name
+                logger.info(f'[提取-Text-头部] product_name(标题行) = {product_name}')
+    except Exception as e:
+        logger.warning(f'[提取] 产品名提取失败: {e}')
 
 
 def _parse_header_zone(header_rows: list, coa: COAData):
