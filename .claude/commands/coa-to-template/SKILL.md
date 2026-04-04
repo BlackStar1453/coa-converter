@@ -4,7 +4,7 @@ description: >
   COA to template filler. MUST USE for any of these scenarios:
   (1) User mentions "COA" or "Certificate of Analysis" or "分析证书" or "检测报告" or "检测数据" with any template/模板/filling task.
   (2) User wants to fill Assay, Ratio, Powder, Allergen, Flow Chart, Composition Statement, CS, Nutrition Info, or Safety Data Sheet templates from PDF data.
-  (3) User asks to extract data from a lab/supplier PDF into XLSX or DOCX templates.
+  (3) User asks to extract data from a lab PDF into XLSX or DOCX templates.
   Keywords that signal this skill: COA, 分析证书, 检测数据, Assay模板, Ratio template, 过敏原声明, 流程图, 成分声明, 营养信息, 安全数据表, "fill template from PDF", "PDF转模板".
   NEVER use for: generic PDF reading/merging/converting, script writing, web development, or image conversion.
 ---
@@ -13,7 +13,7 @@ description: >
 
 > **平台适配**：本文档中 Steps 2-6 的命令示例以 bash 编写。在 Windows 上，Claude 应自动将 `python3` 替换为 `python`，将 Unix 路径（`~/`、`/tmp/`）替换为 Windows 等价路径（`$HOME\`、`$env:TEMP\`），将 bash 语法替换为 PowerShell 等价命令。
 
-将供应商COA (Certificate of Analysis) PDF文件中的检测数据提取并填充到Key In Nutrition的模板中。支持 XLSX 和 DOCX 两种模板格式。
+将COA (Certificate of Analysis) PDF文件中的检测数据提取并填充到Key In Nutrition的模板中。支持 XLSX 和 DOCX 两种模板格式。
 
 ## 项目根目录检测（必须首先执行）
 
@@ -185,15 +185,7 @@ if [ -z "$OUTPUT_PATH" ]; then
   TEMPLATE_EXT="${TEMPLATE_PATH##*.}"
   OUTPUT_PATH="$PROJECT_ROOT/output/${PDF_BASE}.${TEMPLATE_EXT}"
 fi
-
-# 供应商检查
-python3 "$PROJECT_ROOT/converter/supplier_checker.py" "$PDF_PATH"
-SUPPLIER_CHECK=$?
 ```
-
-供应商检查结果决定后续流程：
-- **退出码 0**（已知供应商）→ 转换后仍需执行验证（Step 4）
-- **退出码 1**（未知供应商）→ 转换后执行验证（Step 4），验证通过后注册供应商（Step 5）
 
 ### Step 3. 运行转换
 ```bash
@@ -236,7 +228,7 @@ COA PDF 中的产品名通常包含一个或多个物质，例如：
 **数据来源优先级**：
 1. USDA FoodData Central (fdc.nal.usda.gov)
 2. 权威营养数据库（如 Nutritionix、MyFitnessPal）
-3. 供应商官方产品规格书
+3. 官方产品规格书
 4. 学术文献或行业标准数据
 
 **搜索要求**：
@@ -359,33 +351,12 @@ wb.close()
 4. **重新验证**：重复 4.1-4.2（三方对比），确认修复生效
 5. **最多迭代 3 次**：如果 3 次迭代仍无法修复，停止并报告需要人工介入
 
-### Step 5. 注册新供应商（AI 验证通过后）
-
-验证通过后，使用以下命令将供应商注册到记录中：
-```bash
-cd "$PROJECT_ROOT/converter" && python3 -c "
-from supplier_checker import register_supplier
-register_supplier(
-    supplier_id='<供应商ID，小写英文>',
-    supplier_name='<供应商名称>',
-    signatures=['<签名1: 公司名/地址/网站等PDF中出现的唯一标识>'],
-    pdf_format='<lined_table 或 text_based>',
-    pdf_name='<PDF文件名>',
-    accuracy='<正确率，如100%>',
-    notes='<格式特征备注>'
-)
-"
-```
-
-注册后，同供应商的后续 PDF 将自动识别为已知供应商，跳过 AI 验证。
-
-### Step 6. 报告转换结果
+### Step 5. 报告转换结果
 - 列出成功填充的字段数量
 - 列出自动验证结果（总字段数、通过数、失败数、正确率）
 - 列出任何警告或未映射的项目
 - 如有 AI 验证修复，列出修复轮次和最终结果
 - 提供输出文件路径
-- 标注供应商状态（已知/新注册）
 
 ---
 

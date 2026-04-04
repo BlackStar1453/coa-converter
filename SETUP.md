@@ -85,8 +85,6 @@ coa-converter-web/
 │   ├── template_detector.py #   模板布局自动检测
 │   ├── xlsx_filler.py      #   XLSX 模板填充
 │   ├── docx_filler.py      #   DOCX 模板填充
-│   ├── supplier_checker.py #   供应商识别
-│   └── supplier_registry.json # 已验证供应商注册表
 ├── static/                 # Web 前端（HTML/CSS/JS）
 ├── templates/              # 模板文件（XLSX + DOCX）
 ├── .claude/commands/       # Claude Code Skill 定义

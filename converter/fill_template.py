@@ -457,8 +457,21 @@ def _fill_cs_docx(doc, product_name: str, country: str):
 
 
 def _fill_nutrition_docx(doc, product_name: str):
-    """Nutrition Info"""
+    """Nutrition Info — 替换产品名并清空营养数据占位符"""
     _replace_product_name_in_paragraphs(doc, product_name)
+    # 清空营养数据表中的占位符值（Row 1~11 的 C1 列），强制 Step 3.5 网络搜索
+    for table in doc.tables:
+        if len(table.rows) >= 2 and any(
+            'item' in table.rows[0].cells[0].text.strip().lower()
+            for _ in [1]
+        ):
+            for row in table.rows[1:]:
+                if len(row.cells) >= 2:
+                    val_cell = row.cells[1]
+                    for para in val_cell.paragraphs:
+                        for run in para.runs:
+                            run.text = ''
+            logger.info('[填充-Nutrition] 已清空营养数据占位符，需执行 Step 3.5 网络搜索')
 
 
 def _fill_sds_docx(doc, product_name: str, botanical_name: str):
@@ -568,10 +581,17 @@ def _fill_composition_docx(doc, product_name: str, data: dict = None, layout: Te
         row1 = table.rows[1]
         if len(row1.cells) >= 1:
             cell0 = row1.cells[0]
-            if cell0.paragraphs and cell0.paragraphs[0].runs:
+            # 遍历所有段落找到有内容的段落进行替换（处理前导空段落的情况）
+            replaced = False
+            for para in cell0.paragraphs:
+                if para.runs and any(r.text.strip() for r in para.runs):
+                    para.runs[0].text = product_name
+                    for run in para.runs[1:]:
+                        run.text = ''
+                    replaced = True
+                    break
+            if not replaced and cell0.paragraphs and cell0.paragraphs[0].runs:
                 cell0.paragraphs[0].runs[0].text = product_name
-                for run in cell0.paragraphs[0].runs[1:]:
-                    run.text = ''
         if len(row1.cells) >= 2:
             cell1 = row1.cells[1]
             for para in cell1.paragraphs:

@@ -14,19 +14,70 @@ MARKER_DIR = '/tmp'
 
 
 def _find_claude_cli():
-    """Find Claude CLI binary from known paths or PATH."""
+    """Find Claude CLI binary from known paths or PATH.
+
+    Checks common installation locations for various package managers
+    (Homebrew, npm global, nvm, volta, bun, pnpm) before falling back
+    to PATH search. Also loads shell profile PATH to handle cases where
+    the web server process has a different PATH than the user's shell.
+    """
     candidates = [
+        # Homebrew (Apple Silicon + Intel)
+        '/opt/homebrew/bin/claude',
+        '/usr/local/bin/claude',
+        # Claude Code direct installs
         os.path.expanduser('~/.local/bin/claude'),
         os.path.expanduser('~/.claude/local/claude'),
-        '/usr/local/bin/claude',
+        # npm global installs
         os.path.expanduser('~/.npm-global/bin/claude'),
+        # nvm-managed Node.js
+        *_glob_expand('~/.nvm/versions/node/*/bin/claude'),
+        # volta
+        os.path.expanduser('~/.volta/bin/claude'),
+        # bun
+        os.path.expanduser('~/.bun/bin/claude'),
+        # pnpm global
+        os.path.expanduser('~/.local/share/pnpm/claude'),
+        # system
+        '/usr/bin/claude',
     ]
     for path in candidates:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
+
+    # Fallback: search PATH
     found = shutil.which('claude')
     if found:
         return found
+
+    # Last resort: try loading the user's shell PATH
+    shell_path = _get_shell_path()
+    if shell_path:
+        found = shutil.which('claude', path=shell_path)
+        if found:
+            return found
+
+    return None
+
+
+def _glob_expand(pattern: str) -> list:
+    """Expand a glob pattern with ~ into a list of matching paths."""
+    import glob
+    return glob.glob(os.path.expanduser(pattern))
+
+
+def _get_shell_path() -> str | None:
+    """Load PATH from the user's login shell to catch paths not in server env."""
+    try:
+        shell = os.environ.get('SHELL', '/bin/zsh')
+        result = subprocess.run(
+            [shell, '-l', '-c', 'echo $PATH'],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
     return None
 
 

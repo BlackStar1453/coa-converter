@@ -6,7 +6,7 @@ import os
 import logging
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from pathlib import Path
 
 from job_manager import JobManager
@@ -454,9 +454,14 @@ class COAHandler(SimpleHTTPRequestHandler):
             data = f.read()
         self.send_response(200)
         self.send_header('Content-Type', 'application/octet-stream')
+        # RFC 6266: ASCII fallback + UTF-8 encoded filename for special chars
+        ascii_name = filename.encode('ascii', 'replace').decode('ascii')
         self.send_header('Content-Disposition',
-                         f'attachment; filename="{filename}"')
+                         f"attachment; filename=\"{ascii_name}\"; "
+                         f"filename*=UTF-8''{quote(filename)}")
         self.send_header('Content-Length', len(data))
+        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        self.send_header('Connection', 'close')
         self.end_headers()
         self.wfile.write(data)
 

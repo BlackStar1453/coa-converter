@@ -146,16 +146,15 @@ class TestConvertAllMultiTemplate(unittest.TestCase):
         conn.close()
         return data
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_multi_template_creates_cross_product_jobs(self, mock_supplier, mock_convert):
+    def test_multi_template_creates_cross_product_jobs(self, mock_convert, mock_verify):
         """Selecting 2 templates for 1 PDF should create 2 jobs."""
         # Mock conversion to just touch the output file
         def fake_convert(pdf, tpl, out):
             Path(out).write_bytes(b'fake output')
             return out
         mock_convert.side_effect = fake_convert
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         # Upload 1 PDF
         status, data = self._upload_pdf()
@@ -185,16 +184,16 @@ class TestConvertAllMultiTemplate(unittest.TestCase):
         jobs = self._get_jobs()
         # Should have 2 jobs total (original pending + 1 cloned)
         self.assertEqual(len(jobs), 2)
-        # Both should be 'done' (no AI verify since force_verify=False & known supplier)
+        # Conversion done, now in verifying (AI verification mocked out)
         statuses = {j['status'] for j in jobs}
-        self.assertEqual(statuses, {'done'})
+        self.assertEqual(statuses, {'verifying'})
         # Each should have a different template
         template_names = {j['template_name'] for j in jobs}
         self.assertEqual(len(template_names), 2)
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_multi_template_parallel_execution(self, mock_supplier, mock_convert):
+    def test_multi_template_parallel_execution(self, mock_convert, mock_verify):
         """Multiple conversions should run in parallel, not sequentially."""
         call_times = []
 
@@ -206,7 +205,6 @@ class TestConvertAllMultiTemplate(unittest.TestCase):
             return out
 
         mock_convert.side_effect = slow_convert
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         self._upload_pdf()
 
@@ -242,15 +240,14 @@ class TestConvertAllMultiTemplate(unittest.TestCase):
             self.assertLess(start_spread, 0.3,
                             f'Conversions not parallel: start spread = {start_spread:.2f}s')
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_backward_compat_single_template_path(self, mock_supplier, mock_convert):
+    def test_backward_compat_single_template_path(self, mock_convert, mock_verify):
         """Old-style single template_path should still work."""
         def fake_convert(pdf, tpl, out):
             Path(out).write_bytes(b'ok')
             return out
         mock_convert.side_effect = fake_convert
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         self._upload_pdf()
 
@@ -300,9 +297,9 @@ class TestDownload(unittest.TestCase):
         conn.close()
         return data
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_download_returns_attachment_header(self, mock_supplier, mock_convert):
+    def test_download_returns_attachment_header(self, mock_convert, mock_verify):
         """GET /api/download/{id} must return Content-Disposition: attachment."""
         output_content = b'This is the converted output file content'
 
@@ -310,7 +307,6 @@ class TestDownload(unittest.TestCase):
             Path(out).write_bytes(output_content)
             return out
         mock_convert.side_effect = fake_convert
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         jobs_data = self._upload_pdf()
         job_id = jobs_data[0]['id']
@@ -350,8 +346,7 @@ class TestDownload(unittest.TestCase):
 
     @patch('terminal_launcher.CLAUDE_CLI', None)
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_download_available_after_ai_error(self, mock_supplier, mock_convert):
+    def test_download_available_after_ai_error(self, mock_convert):
         """If conversion succeeds but AI verification fails, download should still work."""
         output_content = b'Converted file data'
 
@@ -360,7 +355,6 @@ class TestDownload(unittest.TestCase):
             return out
         mock_convert.side_effect = fake_convert
         # Force AI verification
-        mock_supplier.return_value = {'known': False, 'needs_ai_verification': True}
 
         jobs_data = self._upload_pdf()
         job_id = jobs_data[0]['id']
@@ -547,15 +541,14 @@ class TestInputPDFNotDeleted(unittest.TestCase):
     def tearDown(self):
         self.srv.stop()
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_input_pdf_preserved_after_conversion(self, mock_supplier, mock_convert):
+    def test_input_pdf_preserved_after_conversion(self, mock_convert, mock_verify):
         """Input PDF should still exist after conversion for re-verification."""
         def fake_convert(pdf, tpl, out):
             Path(out).write_bytes(b'output')
             return out
         mock_convert.side_effect = fake_convert
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         # Upload
         boundary = '----TB789'
@@ -708,12 +701,11 @@ class TestSingleConvertFlow(unittest.TestCase):
         resp = conn.getresponse()
         return json.loads(resp.read())
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_convert_known_supplier_goes_to_done(self, mock_supplier, mock_convert):
-        """Known supplier + no force_verify → status should reach 'done'."""
+    def test_convert_reaches_verifying(self, mock_convert, mock_verify):
+        """After conversion, status should reach 'verifying' for AI verification."""
         mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'out'), o)[1]
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         data = self._upload()
         job_id = data[0]['id']
@@ -738,14 +730,13 @@ class TestSingleConvertFlow(unittest.TestCase):
         resp = conn.getresponse()
         job = json.loads(resp.read())
         conn.close()
-        self.assertEqual(job['status'], 'done')
+        self.assertEqual(job['status'], 'verifying')
         self.assertIsNotNone(job['output_path'])
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_convert_sets_template_info(self, mock_supplier, mock_convert):
+    def test_convert_sets_template_info(self, mock_convert, mock_verify):
         mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'x'), o)[1]
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         data = self._upload()
         job_id = data[0]['id']
@@ -795,12 +786,11 @@ class TestSingleConvertFlow(unittest.TestCase):
         conn.close()
         self.assertEqual(resp.status, 404)
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_convert_already_converted_returns_400(self, mock_supplier, mock_convert):
+    def test_convert_already_converted_returns_400(self, mock_convert, mock_verify):
         """Cannot convert a job that's not pending."""
         mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'x'), o)[1]
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         data = self._upload()
         job_id = data[0]['id']
@@ -888,10 +878,8 @@ class TestVerifyFlow(unittest.TestCase):
 
     @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_verify_sets_status_to_verifying(self, mock_supplier, mock_convert, mock_verify):
+    def test_verify_sets_status_to_verifying(self, mock_convert, mock_verify):
         mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'out'), o)[1]
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         job_id = self._upload_and_convert()
         # Convert first
@@ -980,12 +968,11 @@ class TestReportErrorFlow(unittest.TestCase):
         conn.close()
         return data[0]['id']
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('terminal_launcher.launch_error_fix_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_report_error_triggers_fix(self, mock_supplier, mock_convert, mock_fix):
+    def test_report_error_triggers_fix(self, mock_convert, mock_fix, mock_verify):
         mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'out'), o)[1]
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         job_id = self._upload_and_convert_to_done()
         # Convert
@@ -1103,12 +1090,11 @@ class TestRemoveFlow(unittest.TestCase):
 
         self.assertFalse(os.path.exists(pdf_path))
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_remove_deletes_output_file(self, mock_supplier, mock_convert):
+    def test_remove_deletes_output_file(self, mock_convert, mock_verify):
         """Remove should clean up the output file too."""
         mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'data'), o)[1]
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
         templates = _get_template_paths()
         if not templates:
             self.skipTest('Need at least 1 template')
@@ -1314,12 +1300,11 @@ class TestConvertAllEdgeCases(unittest.TestCase):
         self.assertEqual(resp.status, 400)
         self.assertIn('pending', result.get('error', '').lower())
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_convert_all_multiple_pdfs_multiple_templates(self, mock_supplier, mock_convert):
+    def test_convert_all_multiple_pdfs_multiple_templates(self, mock_convert, mock_verify):
         """2 PDFs × 2 templates = 4 jobs total."""
         mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(b'x'), o)[1]
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         if len(self.templates) < 2:
             self.skipTest('Need at least 2 templates')
@@ -1349,7 +1334,7 @@ class TestConvertAllEdgeCases(unittest.TestCase):
         jobs_list = json.loads(resp.read())
         conn.close()
         self.assertEqual(len(jobs_list), 4)
-        self.assertTrue(all(j['status'] == 'done' for j in jobs_list))
+        self.assertTrue(all(j['status'] == 'verifying' for j in jobs_list))
 
 
 class TestFullLifecycle(unittest.TestCase):
@@ -1365,12 +1350,11 @@ class TestFullLifecycle(unittest.TestCase):
     def tearDown(self):
         self.srv.stop()
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_upload_convert_download_remove(self, mock_supplier, mock_convert):
+    def test_upload_convert_download_remove(self, mock_convert, mock_verify):
         output_content = b'Full lifecycle output data'
         mock_convert.side_effect = lambda p, t, o: (Path(o).write_bytes(output_content), o)[1]
-        mock_supplier.return_value = {'known': True, 'needs_ai_verification': False}
 
         # 1. Upload
         boundary = '----Lifecycle'
@@ -1402,13 +1386,13 @@ class TestFullLifecycle(unittest.TestCase):
         conn.close()
         time.sleep(2)
 
-        # 3. Verify status is done
+        # 3. Verify status is verifying (AI verification mocked)
         conn = self.srv.conn()
         conn.request('GET', f'/api/jobs/{job_id}')
         resp = conn.getresponse()
         job = json.loads(resp.read())
         conn.close()
-        self.assertEqual(job['status'], 'done')
+        self.assertIn(job['status'], ('converted', 'verifying'))
 
         # 4. Download
         conn = self.srv.conn()
@@ -1458,20 +1442,17 @@ class TestReportErrorE2E(unittest.TestCase):
         conn.close()
         return resp, data
 
+    @patch('terminal_launcher.launch_verification_silent')
     @patch('terminal_launcher.launch_error_fix_silent')
     @patch('converter_service.convert_coa')
-    @patch('converter_service.check_supplier')
-    def test_report_error_updates_download_content(self, mock_supplier,
-                                                    mock_convert, mock_fix):
+    def test_report_error_updates_download_content(self, mock_convert,
+                                                    mock_fix, mock_verify):
         original_content = b'Original output v1'
         fixed_content = b'Fixed output v2 after error report'
 
         mock_convert.side_effect = lambda p, t, o: (
             Path(o).write_bytes(original_content), o
         )[1]
-        mock_supplier.return_value = {
-            'known': True, 'needs_ai_verification': False,
-        }
 
         # 1. Upload
         fname = f'e2e_report_{uuid.uuid4().hex[:6]}.pdf'
@@ -1507,7 +1488,7 @@ class TestReportErrorE2E(unittest.TestCase):
         resp, job_raw = self._request('GET', f'/api/jobs/{job_id}')
         job = json.loads(job_raw)
         output_path = job['output_path']
-        self.assertEqual(job['status'], 'done')
+        self.assertIn(job['status'], ('converted', 'verifying'))
 
         def fake_fix(jm, jid, pdf, tpl, out, msg):
             """Simulate Claude fixing the file: overwrite content & set done."""
