@@ -13,8 +13,113 @@ import openpyxl
 
 logger = logging.getLogger(__name__)
 
-# 复用 coa_converter 中的别名映射
-from coa_converter import HEADER_FIELD_ALIASES, ITEM_NAME_NORMALIZE, normalize_item_name
+
+# ============ 模板标签映射（仅限模板中出现的固定标签，不含 PDF 别名） ============
+
+# 模板头部标签 → 标准键名（模板是受控文件，标签固定）
+_TEMPLATE_HEADER_ALIASES = {
+    "product name": "product_name",
+    "botanical latin name": "botanical_name",
+    "botanical name": "botanical_name",
+    "plant part": "plant_part",
+    "part used": "plant_part",
+    "batch number": "batch_number",
+    "batch no": "batch_number",
+    "batch no.": "batch_number",
+    "lot number": "batch_number",
+    "lot no": "batch_number",
+    "country of origin": "country",
+    "origin": "country",
+    "quantity": "quantity",
+    "pack size": "quantity",
+    "manufacture date": "mfg_date",
+    "manufacturing date": "mfg_date",
+    "mfg date": "mfg_date",
+    "production date": "mfg_date",
+    "expire date": "exp_date",
+    "expiration date": "exp_date",
+    "expiry date": "exp_date",
+    "exp date": "exp_date",
+    "issue date": "issue_date",
+    "solvent": "solvent",
+}
+
+# 模板数据行标签 → 标准键名（仅模板中实际存在的检测项标签）
+_TEMPLATE_ITEM_LABELS = {
+    "assay": "assay",
+    "ratio": "assay",
+    "appearance": "appearance",
+    "color": "color",
+    "odor": "odor",
+    "taste": "taste",
+    "loss on drying": "lod",
+    "lod": "lod",
+    "moisture": "lod",
+    "residue on ignition": "ash",
+    "ash": "ash",
+    "ash content": "ash",
+    "particle size": "sieve",
+    "sieve analysis": "sieve",
+    "bulk density": "bulk_density",
+    "tapped density": "tapped_density",
+    "specific gravity": "specific_gravity",
+    "ph": "ph",
+    "ph value": "ph",
+    "heavy metals": "heavy_metals",
+    "lead": "lead",
+    "lead (pb)": "lead",
+    "arsenic": "arsenic",
+    "arsenic (as)": "arsenic",
+    "cadmium": "cadmium",
+    "cadmium (cd)": "cadmium",
+    "mercury": "mercury",
+    "mercury (hg)": "mercury",
+    "pesticide residues": "pesticide",
+    "pesticides": "pesticide",
+    "total plate count": "tpc",
+    "total plate counts": "tpc",
+    "total aerobic count": "tpc",
+    "yeast & mold": "yeast_mold",
+    "yeast and mold": "yeast_mold",
+    "yeast & mould": "yeast_mold",
+    "e. coli.": "e_coli",
+    "e. coli": "e_coli",
+    "e.coli": "e_coli",
+    "escherichia coli": "e_coli",
+    "salmonella": "salmonella",
+    "s. aureus": "s_aureus",
+    "staphylococcus aureus": "s_aureus",
+    "coliforms": "coliforms",
+    "solvent residue": "solvent_residue",
+    "aflatoxins": "aflatoxins",
+    "benzo(a)pyrene": "benzo_pyrene",
+    "pah4": "pah4",
+}
+
+
+def _normalize_template_label(text: str) -> str:
+    """将模板中的标签文本归一化为标准键名。仅处理已知的模板标签。"""
+    if not text:
+        return ""
+    text_lower = text.lower().strip()
+    # 精确匹配
+    if text_lower in _TEMPLATE_ITEM_LABELS:
+        return _TEMPLATE_ITEM_LABELS[text_lower]
+    # 去括号后匹配
+    no_parens = re.sub(r'\([^)]*\)', '', text_lower).strip()
+    if no_parens in _TEMPLATE_ITEM_LABELS:
+        return _TEMPLATE_ITEM_LABELS[no_parens]
+    # 去空格和标点后匹配
+    no_space = re.sub(r'[\s.\(\)&]', '', text_lower)
+    for label, key in _TEMPLATE_ITEM_LABELS.items():
+        if re.sub(r'[\s.\(\)&]', '', label) == no_space:
+            return key
+    return ""
+
+
+# 向后兼容：外部模块可能仍引用这些名称
+HEADER_FIELD_ALIASES = _TEMPLATE_HEADER_ALIASES
+normalize_item_name = _normalize_template_label
 
 
 # ============ 数据结构 ============
@@ -149,7 +254,7 @@ def _detect_coa_layout(cell_texts: Dict[Tuple[int, int], str], layout: TemplateL
             continue
         text_lower = text.lower().strip()
         # 检查是否是已知的头部标签
-        for alias, std_key in HEADER_FIELD_ALIASES.items():
+        for alias, std_key in _TEMPLATE_HEADER_ALIASES.items():
             if alias in text_lower or text_lower in alias:
                 # 标签在 (r, c)，值在同一行的右侧
                 value_col = c + 2 if c == 1 else c + 1  # A→C 或 E→F
@@ -221,7 +326,7 @@ def _detect_coa_layout(cell_texts: Dict[Tuple[int, int], str], layout: TemplateL
             continue
 
         # 尝试匹配检测项
-        item_key = normalize_item_name(text)
+        item_key = _normalize_template_label(text)
         if item_key:
             layout.table_rows[item_key] = r
             continue
@@ -361,7 +466,7 @@ def detect_docx_layout(template_path: str) -> TemplateLayout:
                     table_info['fields']['result_header'] = (ri, ci)
 
                 # SDS 特有标签
-                for alias, std_key in HEADER_FIELD_ALIASES.items():
+                for alias, std_key in _TEMPLATE_HEADER_ALIASES.items():
                     if alias in cell_lower:
                         table_info['fields'][std_key] = (ri, ci)
                         break

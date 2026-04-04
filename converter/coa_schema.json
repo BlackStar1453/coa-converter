@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "COA Extraction Data",
+  "description": "AI 从 PDF 提取的 COA 数据，用于 fill_template.py 填充模板",
+  "type": "object",
+  "required": ["schema_version", "header", "test_items", "template_mapping"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "header": {
+      "type": "object",
+      "properties": {
+        "product_name": { "type": "string" },
+        "botanical_name": { "type": "string" },
+        "plant_part": { "type": "string" },
+        "batch_number": { "type": "string" },
+        "country": { "type": "string" },
+        "mfg_date": { "type": "string", "description": "YYYY.MM.DD 或 YYYY.MM 格式" },
+        "exp_date": { "type": "string", "description": "YYYY.MM.DD 或 YYYY.MM 格式" },
+        "quantity": { "type": "string" },
+        "solvent": { "type": "string" }
+      }
+    },
+    "assay": {
+      "type": ["object", "null"],
+      "properties": {
+        "specification": { "type": "string" },
+        "result": { "type": "string" },
+        "method": { "type": "string" }
+      }
+    },
+    "test_items": {
+      "type": "array",
+      "description": "所有检测项，保持 PDF 原始顺序",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "description": "检测项名称（PDF 原文）" },
+          "specification": { "type": "string" },
+          "result": { "type": "string" },
+          "method": { "type": "string" },
+          "section": {
+            "type": "string",
+            "enum": ["analytical", "microbiology", "other"],
+            "description": "检测项类别"
+          }
+        }
+      }
+    },
+    "packing": { "type": "string", "description": "包装信息" },
+    "storage": { "type": "string", "description": "存储条件" },
+    "template_mapping": {
+      "type": "array",
+      "description": "AI 生成的 test_items → 模板行映射",
+      "items": {
+        "type": "object",
+        "required": ["test_item_index", "is_extra"],
+        "properties": {
+          "test_item_index": { "type": "integer", "description": "test_items 数组索引" },
+          "template_row_label": {
+            "type": ["string", "null"],
+            "description": "模板中 A 列的标签文本，null 表示额外项"
+          },
+          "is_extra": {
+            "type": "boolean",
+            "description": "true = PDF 有此项但模板无对应行"
+          },
+          "insert_after_label": {
+            "type": ["string", "null"],
+            "description": "额外项应插入在哪个模板标签之后"
+          }
+        }
+      }
+    }
+  }
+}
