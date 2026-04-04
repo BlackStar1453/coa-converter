@@ -151,6 +151,12 @@ def _fill_coa_data_rows(ws, coa: COAData, layout: TemplateLayout):
             ws.cell(row=row_num, column=method_col, value="")
             logger.warning(f'[XLSX填充-数据] Row {row_num} ({item_key}): PDF 中未找到对应数据，已清空模板默认值')
 
+    # 报告 PDF 中有但模板中无对应行的检测项
+    template_keys = set(layout.table_rows.keys())
+    for key, item in extracted.items():
+        if key not in template_keys and key != 'assay':
+            logger.warning(f'[XLSX填充-数据] PDF 检测项 "{item["item"]}" ({key}) 在模板中无对应行，数据未填入')
+
 
 def _fill_coa_packing(ws, coa: COAData, layout: TemplateLayout):
     """填充 Packing & Storage"""

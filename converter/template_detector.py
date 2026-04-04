@@ -95,6 +95,13 @@ _TEMPLATE_ITEM_LABELS = {
     "s. aureus": "s_aureus",
     "staphylococcus aureus": "s_aureus",
     "coliforms": "coliforms",
+    "pseudomonas aeruginosa": "pseudomonas",
+    "pseudomonas": "pseudomonas",
+    "bile-tolerant gram-negative bacteria": "bile_tolerant",
+    "identification": "identification",
+    "foreign matter": "foreign_matter",
+    "elemental impurities": "elemental_impurities",
+    "plant part used": "plant_part_used",
     "solvent residue": "solvent_residue",
     "aflatoxins": "aflatoxins",
     "benzo(a)pyrene": "benzo_pyrene",
@@ -122,9 +129,7 @@ def _normalize_template_label(text: str) -> str:
     return ""
 
 
-# 向后兼容：外部模块可能仍引用这些名称
 HEADER_FIELD_ALIASES = _TEMPLATE_HEADER_ALIASES
-normalize_item_name = _normalize_template_label
 
 
 # ============ 数据结构 ============

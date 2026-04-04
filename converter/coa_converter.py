@@ -140,9 +140,12 @@ ITEM_NAME_NORMALIZE = {
     "plant part used": "plant_part_used",
     "loss on drying": "lod",
     "moisture": "lod",
+    "moisture content": "lod",
     "residue on ignition": "ash",
     "ash": "ash",
     "ash content": "ash",
+    "total ash": "ash",
+    "acid insoluble ash": "ash",
     "particle size": "sieve",
     "sieve analysis": "sieve",
     "sieve test": "sieve",
@@ -197,6 +200,7 @@ ITEM_NAME_NORMALIZE = {
     "total aerobic count": "tpc",
     "total aerobic microbial count": "tpc",
     "total bacterial count": "tpc",
+    "aerobic plate count": "tpc",
     "total yeast & mold": "yeast_mold",
     "total yeast and mold": "yeast_mold",
     "total yeasts and molds count": "yeast_mold",
@@ -221,6 +225,14 @@ ITEM_NAME_NORMALIZE = {
     "coliform": "coliforms",
     "coliforms": "coliforms",
 }
+
+# 微生物检测项键名集合（用于数据行路由）
+MICROBIOLOGY_KEYS = {"tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus", "coliforms", "pseudomonas", "bile_tolerant"}
+
+# Words 提取策略的像素阈值配置
+WORD_XY_TOLERANCE = 3       # pdfplumber extract_words 的 x/y 容差
+WORD_Y_MERGE_TOLERANCE = 3  # y坐标合并误差（±此值视为同一行）
+WORD_COL_GAP_THRESHOLD = 60 # 列间距阈值（px），大于此值视为不同列
 
 # 注意：XLSX_ROW_KEYS 已移除，改用 template_detector 自动检测行号
 
@@ -450,13 +462,27 @@ def extract_from_pdf(pdf_path: str) -> COAData:
             doc.close()
         except Exception as e:
             logger.warning(f'[提取] 全文补充头部失败: {e}')
-    elif not has_items:
-        # 数据项也为空，完全降级到words策略
+    elif has_header and not has_items:
+        # 头部已拿到但数据项为空，用words策略补充数据
+        logger.info('[提取] 头部有效但数据项缺失，用words策略补充数据')
+        coa_words = COAData()
+        try:
+            _extract_by_words(pdf_path, coa_words)
+            if coa_words.analytical_items or coa_words.microbiology_items or coa_words.assay:
+                coa.analytical_items = coa_words.analytical_items
+                coa.microbiology_items = coa_words.microbiology_items
+                if coa_words.assay and not coa.assay:
+                    coa.assay = coa_words.assay
+                coa.unmapped_items = coa_words.unmapped_items
+                coa.warnings.extend(coa_words.warnings)
+        except Exception as e:
+            logger.error(f'[提取-Words] words策略补充失败: {e}')
+    elif not has_items and not has_header:
+        # 两者都为空，完全降级到words策略
         logger.info('[提取] 表格提取数据不足，降级到基于word位置的策略')
         coa_words = COAData()
         try:
             _extract_by_words(pdf_path, coa_words)
-            # 用words策略的结果替换
             if coa_words.header or coa_words.analytical_items or coa_words.microbiology_items:
                 coa = coa_words
         except Exception as e:
@@ -492,6 +518,30 @@ def _split_multiline_rows(rows: List) -> List:
                 new_row.append(col_lines[i] if i < len(col_lines) else "")
             expanded.append(new_row)
     return expanded
+
+
+def _route_data_item(item_key: str, item_dict: dict, cells: list, coa: COAData, source: str = "") -> str:
+    """统一的数据行路由逻辑。返回更新后的 section 名称，或空字符串表示未路由。"""
+    prefix = f'[提取{"-" + source if source else ""}]'
+
+    if not item_key:
+        coa.unmapped_items.append(item_dict)
+        coa.warnings.append(f'未识别的检测项: "{cells[0]}"')
+        return "unmapped"
+
+    # "extract_ratio" 特殊处理：将其作为 Assay/Ratio 数据
+    if item_key == "extract_ratio" and not coa.assay:
+        coa.assay = _make_item_dict(cells)
+        logger.info(f'{prefix} Extract Ratio 映射为 Assay: {coa.assay}')
+        return "analytical"
+
+    # 分配到对应的section
+    if item_key in MICROBIOLOGY_KEYS:
+        coa.microbiology_items.append(item_dict)
+        return "microbiology"
+    else:
+        coa.analytical_items.append(item_dict)
+        return "analytical"
 
 
 def _parse_table_rows(rows: List, coa: COAData):
@@ -591,23 +641,9 @@ def _parse_table_rows(rows: List, coa: COAData):
                     coa.packing_storage = text
             continue
 
-        if not item_key:
-            coa.unmapped_items.append(item_dict)
-            coa.warnings.append(f'未识别的检测项: "{cells[0]}"')
-            continue
-
-        # "extract_ratio" 特殊处理：将其作为 Assay/Ratio 数据
-        if item_key == "extract_ratio" and not coa.assay:
-            coa.assay = _make_item_dict(cells)
-            logger.info(f'[提取] Extract Ratio 映射为 Assay: {coa.assay}')
-            continue
-
-        # 分配到对应的section
-        if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus", "coliforms", "pseudomonas", "bile_tolerant"):
-            coa.microbiology_items.append(item_dict)
+        routed = _route_data_item(item_key, item_dict, cells, coa)
+        if routed == "microbiology":
             current_section = "microbiology"
-        else:
-            coa.analytical_items.append(item_dict)
 
 
 def _parse_header_row(cells: List[str], coa: COAData):
@@ -673,7 +709,7 @@ def _extract_by_words(pdf_path: str, coa: COAData):
 
     with pdfplumber.open(pdf_path) as pdf:
         for page_num, page in enumerate(pdf.pages):
-            words = page.extract_words(x_tolerance=3, y_tolerance=3)
+            words = page.extract_words(x_tolerance=WORD_XY_TOLERANCE, y_tolerance=WORD_XY_TOLERANCE)
             if not words:
                 continue
 
@@ -681,10 +717,10 @@ def _extract_by_words(pdf_path: str, coa: COAData):
             y_groups = {}
             for w in words:
                 y_key = round(w['top'])
-                # 合并相近y坐标（±3px视为同一行）
+                # 合并相近y坐标视为同一行
                 merged = False
                 for existing_y in list(y_groups.keys()):
-                    if abs(y_key - existing_y) <= 3:
+                    if abs(y_key - existing_y) <= WORD_Y_MERGE_TOLERANCE:
                         y_groups[existing_y].append(w)
                         merged = True
                         break
@@ -720,7 +756,7 @@ def _extract_by_words(pdf_path: str, coa: COAData):
             header_col_centers = []
             for w in header_words:
                 x0 = w['x0']
-                if not header_col_centers or x0 - header_col_centers[-1] > 60:
+                if not header_col_centers or x0 - header_col_centers[-1] > WORD_COL_GAP_THRESHOLD:
                     header_col_centers.append(x0)
 
             # 确保恰好4列；如果超过4列，合并最后几列
@@ -857,23 +893,9 @@ def _extract_by_words(pdf_path: str, coa: COAData):
                     continue
 
                 item_dict = _make_item_dict(cells)
-
-                if not item_key:
-                    coa.unmapped_items.append(item_dict)
-                    coa.warnings.append(f'未识别的检测项: "{cells[0]}"')
-                    continue
-
-                # "extract_ratio" 特殊处理：将其作为 Assay/Ratio 数据
-                if item_key == "extract_ratio" and not coa.assay:
-                    coa.assay = _make_item_dict(cells)
-                    logger.info(f'[提取-Words] Extract Ratio 映射为 Assay: {coa.assay}')
-                    continue
-
-                if item_key in ("tpc", "yeast_mold", "e_coli", "salmonella", "s_aureus", "coliforms", "pseudomonas", "bile_tolerant"):
-                    coa.microbiology_items.append(item_dict)
+                routed = _route_data_item(item_key, item_dict, cells, coa, source="Words")
+                if routed == "microbiology":
                     current_section = "microbiology"
-                else:
-                    coa.analytical_items.append(item_dict)
 
 
 def _parse_header_from_text(full_text: str, coa: COAData):
