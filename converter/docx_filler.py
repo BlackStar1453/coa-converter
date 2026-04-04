@@ -165,13 +165,25 @@ def _fill_cs(doc, coa: COAData, layout: TemplateLayout):
 # ============ Nutrition 模板 ============
 
 def _fill_nutrition(doc, coa: COAData, layout: TemplateLayout):
-    """填充 Nutrition Info 模板 — 替换产品名 + 填充营养数据表"""
+    """填充 Nutrition Info 模板 — 替换产品名 + 清空营养数据占位符"""
     product_name = coa.header.get('product_name', '')
     _replace_product_name_in_paragraphs(doc, product_name)
 
-    # 营养数据通常不来自 COA PDF，COA 主要包含检测数据
-    # 如果 coa 中有营养数据，可以填充到表格中
-    logger.info('[DOCX填充-Nutrition] 产品名已替换，营养数据表保持模板默认值')
+    # 清空营养数据表的占位符值，强制要求通过 Step 3.5 网络搜索填充真实数据
+    if doc.tables:
+        table = doc.tables[0]
+        for ri, row in enumerate(table.rows):
+            if ri == 0:
+                continue  # 跳过表头行
+            # 清空数据列（第2列，index=1）
+            cell = row.cells[1] if len(row.cells) > 1 else None
+            if cell:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.text = ''
+                    if not para.runs:
+                        para.text = ''
+        logger.warning('[DOCX填充-Nutrition] 产品名已替换，营养数据占位符已清空——必须通过 Step 3.5 网络搜索填充真实数据')
 
 
 # ============ SDS (Safety Data Sheet) 模板 ============
@@ -445,6 +457,24 @@ def verify_docx_output(coa: COAData, layout: TemplateLayout, output_path: str) -
                 else:
                     failed += 1
                     details.append(f'Table[{ti}] Row[1] 未包含产品名')
+
+    # Nutrition 特有：检查营养数据是否已填充（不应为空）
+    if layout.template_type == 'nutrition' and doc.tables:
+        table = doc.tables[0]
+        empty_nutrition_rows = []
+        for ri, row in enumerate(table.rows):
+            if ri == 0:
+                continue
+            value_cell = row.cells[1].text.strip() if len(row.cells) > 1 else ''
+            item_name = row.cells[0].text.strip() if row.cells else f'Row{ri}'
+            total += 1
+            if value_cell:
+                passed += 1
+            else:
+                failed += 1
+                empty_nutrition_rows.append(item_name)
+        if empty_nutrition_rows:
+            details.append(f'营养数据未填充（需执行 Step 3.5 网络搜索）: {", ".join(empty_nutrition_rows)}')
 
     # 检查无残留模板默认值
     example_names = ['Ashwagandha', 'Pumpkin Seed Protein Powder', 'Organic Moringa Extract']
