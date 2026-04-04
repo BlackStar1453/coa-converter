@@ -522,8 +522,6 @@ def _split_multiline_rows(rows: List) -> List:
 
 def _route_data_item(item_key: str, item_dict: dict, cells: list, coa: COAData, source: str = "") -> str:
     """统一的数据行路由逻辑。返回更新后的 section 名称，或空字符串表示未路由。"""
-    prefix = f'[提取{"-" + source if source else ""}]'
-
     if not item_key:
         coa.unmapped_items.append(item_dict)
         coa.warnings.append(f'未识别的检测项: "{cells[0]}"')
@@ -532,6 +530,7 @@ def _route_data_item(item_key: str, item_dict: dict, cells: list, coa: COAData, 
     # "extract_ratio" 特殊处理：将其作为 Assay/Ratio 数据
     if item_key == "extract_ratio" and not coa.assay:
         coa.assay = _make_item_dict(cells)
+        prefix = f'[提取{"-" + source if source else ""}]'
         logger.info(f'{prefix} Extract Ratio 映射为 Assay: {coa.assay}')
         return "analytical"
 
