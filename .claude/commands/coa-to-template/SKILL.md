@@ -214,26 +214,49 @@ COA PDF 中的产品名通常包含一个或多个物质，例如：
    - 单物质产品无需拆分，直接作为唯一搜索对象
 3. 确认每种物质的形态（提取物 extract、粉末 powder、原料 raw 等），形态会影响营养数据
 
-#### 3.5.2 对每种物质分别进行网络搜索
+#### 3.5.2 多 Agent 并行查询与结果对比
 
-**对 3.5.1 中识别出的每一种物质**，使用 WebSearch 工具分别搜索其营养成分数据：
+**对 3.5.1 中识别出的每一种物质**，必须启动 **3 个独立 Agent 并行搜索**，搜索完成后对比结果再决定填入数值。
+
+##### 3.5.2a 并行启动 3 个独立搜索 Agent
+
+同时（单条消息中的多个 Agent 工具调用）启动以下 3 个 Agent，各自独立搜索同一物质的营养数据：
+
+| Agent | 搜索策略 | 目标数据源 |
+|-------|---------|-----------|
+| Agent-A | `"{物质名} nutrition facts per 100g site:fdc.nal.usda.gov"` | USDA FoodData Central |
+| Agent-B | `"{物质名} nutritional information calories protein fat carbohydrate per 100g"` | Nutritionix / MyFitnessPal 等权威数据库 |
+| Agent-C | `"USDA {物质名} nutritional value per 100g"` 或 `"{物质名} nutrition specification sheet"` | 官方规格书 / 学术文献 |
+
+> **实现方式**：使用 Agent 工具并发调用（`run_in_background: false`，在同一消息中发出所有 Agent 调用，等待全部返回后再继续），每个 Agent 使用 WebSearch + WebFetch 工具独立检索，返回完整的 per-100g 营养数据（包含 Calories/Protein/Fat/Carbohydrate/Potassium/Dietary Fiber/Sodium/Calcium/Iron/Vitamin A/Vitamin C 及其来源 URL）。
+
+##### 3.5.2b 对比三方结果，确定最终数值
+
+收到 3 个 Agent 的返回结果后，对每项营养指标执行以下对比逻辑：
 
 ```
-每种物质的搜索策略（按优先级）：
-1. 搜索 "{物质名} nutrition facts per 100g"
-2. 搜索 "{物质名} nutritional information calories protein fat carbohydrate"
-3. 搜索 "USDA {物质名} nutritional value per 100g"
-```
+对于每个营养指标（Calories / Protein / Fat / ...）:
+  - 收集 Agent-A、Agent-B、Agent-C 各自给出的数值
+  - 计算差异率 = |max - min| / avg × 100%
 
-**数据来源优先级**：
-1. USDA FoodData Central (fdc.nal.usda.gov)
-2. 权威营养数据库（如 Nutritionix、MyFitnessPal）
-3. 官方产品规格书
-4. 学术文献或行业标准数据
+  情形 A — 三方一致（差异率 < 10%）:
+    → 采用 Agent-A（USDA 优先）的值，标记为 ✅ 已验证
+
+  情形 B — 部分一致（有至少两方差异率 < 10%）:
+    → 采用多数一致的值（优先取 Agent-A 的值），记录分歧方及其数值
+
+  情形 C — 三方分歧（差异率 ≥ 10%）:
+    → 优先采用 USDA（Agent-A）的数值
+    → 在 3.5.4 数据来源报告中标注此项为 ⚠️ 数据存在分歧，列出三方数值供人工核实
+    → **不得取三方平均值，也不得编造数据**
+
+  情形 D — 某 Agent 未找到数据:
+    → 该 Agent 记为 N/A，不计入对比
+    → 若三方均未找到，此项留空并在报告中注明
+```
 
 **搜索要求**：
 - 数据必须是 **per 100g** 的值（与模板单位一致）；若单位不同，需换算
-- 每种物质至少交叉验证 2 个数据源，确保可靠性
 - 对于植物提取物等特殊产品，注意区分原料与成品的营养数据
 - **多物质产品**：若产品含多种物质且无法确定各物质比例，以**主要物质**（产品名第一个成分）的营养数据为基准填入表格，并在 3.5.4 的数据来源报告中注明
 
@@ -281,15 +304,23 @@ doc.save('OUTPUT_PATH')
 "
 ```
 
-#### 3.5.4 记录数据来源
+#### 3.5.4 记录数据来源与对比报告
 
-在转换报告中记录每项营养数据的来源，便于用户核实：
+在转换报告中记录每项营养数据的来源及三方对比结果，便于用户核实：
 
 ```
-营养数据来源：
-- 数据来源: [来源网站/数据库名称]
-- 查询产品/物质: [每种物质名称及对应来源]
-- 未找到的项目: [列出无法查询到的项目及原因]
+营养数据来源（三方对比）：
+- 查询物质: [物质名称]
+
+| 指标            | Agent-A (USDA)  | Agent-B (数据库) | Agent-C (规格书) | 采用值    | 状态        |
+|----------------|-----------------|-----------------|-----------------|---------|-------------|
+| Calories       | XXX kcal        | XXX kcal        | XXX kcal        | XXX kcal | ✅ 已验证   |
+| Protein        | X.X g           | X.X g           | N/A             | X.X g   | ✅ 已验证   |
+| Fat            | X.X g           | X.X g           | X.X g           | X.X g   | ⚠️ 存在分歧 |
+| ...            | ...             | ...             | ...             | ...     | ...         |
+
+- 分歧项说明: [列出差异率 ≥ 10% 的指标及三方原始数值，供人工核实]
+- 未找到的项目: [列出三方均无数据的指标及原因]
 ```
 
 > **重要**：如果某些营养项无法通过网络查询到可靠数据，应在报告中标注，并将该项留空（清空单元格），**不得保留模板占位符值，也不得编造数据**。
