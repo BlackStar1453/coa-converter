@@ -224,11 +224,18 @@ COA PDF 中的产品名通常包含一个或多个物质，例如：
 
 | Agent | 搜索策略 | 目标数据源 |
 |-------|---------|-----------|
-| Agent-A | `"{物质名} nutrition facts per 100g site:fdc.nal.usda.gov"` | USDA FoodData Central |
-| Agent-B | `"{物质名} nutritional information calories protein fat carbohydrate per 100g"` | Nutritionix / MyFitnessPal 等权威数据库 |
-| Agent-C | `"USDA {物质名} nutritional value per 100g"` 或 `"{物质名} nutrition specification sheet"` | 官方规格书 / 学术文献 |
+| Agent-A | `"{物质名} nutrition facts per 100g site:fdc.nal.usda.gov"` | **USDA FoodData Central（主权威源，SR Legacy 优先）** |
+| Agent-B | `"{物质名} {botanical_name} nutritional composition per 100g"` | **学术文献 / 官方规格书**（PubMed、PMC、EFSA、行业数据库） |
+| Agent-C | `"USDA {物质名} nutritional value per 100g"` | **USDA FoodData Central 交叉验证**（通过第三方镜像如 NutritionValue.org 读取相同条目） |
 
-> **实现方式**：使用 Agent 工具并发调用（`run_in_background: false`，在同一消息中发出所有 Agent 调用，等待全部返回后再继续），每个 Agent 使用 WebSearch + WebFetch 工具独立检索，返回完整的 per-100g 营养数据（包含 Calories/Protein/Fat/Carbohydrate/Potassium/Dietary Fiber/Sodium/Calcium/Iron/Vitamin A/Vitamin C 及其来源 URL）。
+> **数据源优先级（固定不变）**：
+> 1. **USDA FoodData Central SR Legacy**（fdc.nal.usda.gov）— 最权威，国际监管机构（FDA、EU、TGA）均认可，必须优先
+> 2. **学术文献 / 官方规格书**（PubMed / PMC / EFSA）— 物种专属数据，可补充 USDA 缺失的指标
+> 3. **品牌产品标注数据**（如 FatSecret、Nutritionix、MyFitnessPal 上的品牌条目）— **仅作旁证，不作为最终采用值**；这类数据来源混杂，Iron/Vitamin C 等指标存在系统性录入错误风险
+>
+> ⚠️ **禁止使用**：FatSecret、Nutritionix、MyFitnessPal 的通用聚合数据（非 USDA SR Legacy 条目），这类数据库存在已知录入错误（如肉桂 Iron 被错误录入为 38mg/100g）。
+
+> **实现方式**：使用 Agent 工具并发调用（`run_in_background: false`，在同一消息中发出所有 Agent 调用，等待全部返回后再继续），每个 Agent 使用 WebSearch + WebFetch 工具独立检索，返回完整的 per-100g 营养数据（包含 Calories/Protein/Fat/Carbohydrate/Potassium/Dietary Fiber/Sodium/Calcium/Iron/Vitamin A/Vitamin C 及其来源 URL 和 FDC ID）。
 
 ##### 3.5.2b 对比三方结果，确定最终数值
 
