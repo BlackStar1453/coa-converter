@@ -168,13 +168,11 @@ async function convertAll() {
   const tpls = getSelectedTemplates();
   if (!tpls.length) return;
 
-  const force = document.getElementById('forceVerify').checked;
-
   try {
     const res = await fetch(`${API}/api/convert-all`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_paths: tpls, force_verify: force, claude_mode: getClaudeMode() }),
+      body: JSON.stringify({ template_paths: tpls, claude_mode: getClaudeMode() }),
     });
     const data = await res.json();
     if (!res.ok) alert(data.error || 'Convert failed');
@@ -188,13 +186,11 @@ async function convertOne(jobId) {
   const tpls = getSelectedTemplates();
   if (!tpls.length) { alert('Please select at least one template'); return; }
 
-  const force = document.getElementById('forceVerify').checked;
-
   try {
     const res = await fetch(`${API}/api/convert/${jobId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_path: tpls[0], force_verify: force, claude_mode: getClaudeMode() }),
+      body: JSON.stringify({ template_path: tpls[0], claude_mode: getClaudeMode() }),
     });
     const data = await res.json();
     if (!res.ok) alert(data.error || 'Convert failed');

@@ -234,7 +234,6 @@ class COAHandler(SimpleHTTPRequestHandler):
             params = {}
 
         template_path = params.get('template_path')
-        force_verify = params.get('force_verify', False)
 
         if not template_path:
             _json_response(self, {'error': 'template_path required'}, 400)
@@ -264,8 +263,7 @@ class COAHandler(SimpleHTTPRequestHandler):
             claude_mode = 'silent'
 
         jobs.update_job(job_id, template_name=template_name,
-                        template_path=template_path,
-                        force_verify=force_verify)
+                        template_path=template_path)
 
         def on_verify_needed(jid, pdf, tpl, out):
             if claude_mode == 'interactive':
@@ -295,7 +293,6 @@ class COAHandler(SimpleHTTPRequestHandler):
             _json_response(self, {'error': 'template_paths required'}, 400)
             return
 
-        force_verify = params.get('force_verify', False)
         claude_mode = params.get('claude_mode', 'silent')
         if not self._is_local():
             claude_mode = 'silent'
@@ -331,8 +328,7 @@ class COAHandler(SimpleHTTPRequestHandler):
                         counter += 1
 
                     jobs.update_job(jid, template_name=template_name,
-                                    template_path=tpl_path,
-                                    force_verify=force_verify)
+                                    template_path=tpl_path)
 
                     def on_verify(j=jid, p=pdf_path, t=tpl_path, o=output_path):
                         def _cb(_jid, _pdf, _tpl, _out):
