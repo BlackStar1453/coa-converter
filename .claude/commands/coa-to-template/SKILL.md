@@ -192,6 +192,144 @@ fi
 python3 "$PROJECT_ROOT/converter/coa_converter.py" "$PDF_PATH" "$TEMPLATE_PATH" "$OUTPUT_PATH"
 ```
 
+**检查转换结果**：观察日志输出中的 `头部字段: N, 分析项: N` 行。如果**头部字段和分析项均为 0**，说明 PDF 文本提取完全失败，触发 Step 3A（AI-First 降级流程）。否则跳到 Step 3.5 或 Step 4。
+
+### Step 3A. 扫描件/图片型 PDF 的 AI-First 降级流程
+
+> **触发条件**：Step 3 的 `coa_converter.py` 提取结果为 0 头部字段 + 0 分析项 + 0 微生物项。这通常表明 PDF 是扫描件或图片型文件，pdfplumber/PyMuPDF/words 三种策略均无法提取文本。
+
+#### 3A.1 确认 PDF 类型
+
+运行快速检测确认 PDF 是否为图片型：
+```bash
+python3 -c "
+import pdfplumber
+pdf = pdfplumber.open('$PDF_PATH')
+words = pdf.pages[0].extract_words()
+print(f'Words count: {len(words)}')
+pdf.close()
+"
+```
+
+如果 `Words count: 0`，确认为扫描件/图片型 PDF，继续执行 3A.2。如果 words > 0 但转换仍失败，属于解析逻辑问题，应走 Step 4.3 的代码修复流程。
+
+#### 3A.2 AI 视觉三次读取与对比
+
+扫描件的视觉识别存在误读风险（如数字 `0.01` 误读为 `0.011`，字母 `l` 与 `1` 混淆等）。为确保数据准确性，必须启动 **3 个独立 Agent 并行读取同一份 PDF**，然后对比三方结果。
+
+##### 3A.2a 并行启动 3 个读取 Agent
+
+在同一消息中发出 3 个 Agent 工具调用（并行执行，非后台），每个 Agent 独立读取 PDF 并输出结构化提取结果：
+
+```
+Agent-A: "读取 PDF 文件 $PDF_PATH，提取所有头部字段和检测数据，输出为结构化列表"
+Agent-B: "读取 PDF 文件 $PDF_PATH，逐项提取所有检测项的名称/规格/结果/方法，输出为结构化列表"  
+Agent-C: "读取 PDF 文件 $PDF_PATH，完整提取所有数据（头部+检测项+包装信息），输出为结构化列表"
+```
+
+每个 Agent 需提取以下信息并以结构化格式返回：
+- **头部字段**：产品名、批号、生产日期、保质期/到期日、包装规格、数量、商标、原产国等
+- **所有检测项**：序号、检测项目名称、单位、检测方法、检测结果、技术要求、单项判定
+- **包装与存储信息**
+- **检验结论**
+
+##### 3A.2b 三方对比，确定最终数据
+
+收到 3 个 Agent 的返回结果后，逐字段对比：
+
+```
+对于每个数据字段（产品名 / 批号 / 每个检测项的每个值 / ...）:
+
+  情形 A — 三方一致:
+    → 直接采用，标记为 ✅ 已验证
+
+  情形 B — 两方一致，一方不同:
+    → 采用多数一致的值
+    → 记录分歧项（值 + 来源 Agent），供 Step 4 重点核查
+
+  情形 C — 三方各不相同:
+    → 对该字段进行第 4 次独立读取（由主代理直接 Read PDF 确认）
+    → 以第 4 次读取结果为准
+    → 在报告中标注 ⚠️ 此项存在视觉识别分歧
+
+  特别关注的高风险字段（数字最易误读）:
+    - 检测结果中的数值（0.01 vs 0.011, 58.2 vs 58.3）
+    - 批号中的数字序列
+    - 日期字段
+    - 检测方法编号（GB 5009.229-2025 vs GB 5009.229-2023）
+```
+
+##### 3A.2c 输出合并后的最终数据
+
+将三方对比后的最终确认数据汇总为单一结构化结果，用于后续 3A.4 生成 JSON。同时记录对比报告（分歧项及其解决方式），附在 Step 5 的转换报告中。
+
+#### 3A.3 读取模板结构
+
+使用 `read_template.py` 获取模板的精确布局信息：
+```bash
+python3 "$PROJECT_ROOT/converter/read_template.py" "$TEMPLATE_PATH"
+```
+
+输出为 JSON 格式，包含模板的 header_fields、row_labels、data_columns 等结构信息。AI 需要根据此结构来生成正确的 template_mapping。
+
+#### 3A.4 生成 JSON 数据
+
+根据 3A.2c 三方对比后的最终确认数据和 3A.3 的模板结构，按照 `$PROJECT_ROOT/converter/coa_schema.json` 的格式生成 JSON 文件。
+
+**关键映射规则**：
+1. **header**: 将 PDF 头部字段映射到标准键名（product_name, batch_number, mfg_date, exp_date, country 等）
+2. **assay**: 如果 PDF 中有主要含量/比例数据，填入 assay 字段
+3. **test_items**: 按 PDF 原始顺序列出所有检测项，每项包含 name、specification、result、method、section
+4. **template_mapping**: 将 test_items 中的每一项映射到模板的 row_labels：
+   - 能映射到模板现有行的项：`is_extra: false`，填入 `template_row_label`（模板 A 列标签文本）
+   - 模板中无对应行的额外项：`is_extra: true`，填入 `insert_after_label`（指定插入位置）
+
+**映射匹配策略**（按优先级）：
+- 精确匹配：PDF 项名与模板 row_label 完全一致
+- 语义匹配：PDF "色泽/Color" → 模板 "Appearance"，PDF "气味滋味/Smell&taste" → 模板 "Odor"，PDF "水分/Moisture" → 模板 "Loss on drying"
+- 无匹配：标记为 `is_extra: true`
+
+**日期格式**：统一转换为 `YYYY.MM.DD`。如果 PDF 只给保质期（如"24个月"），根据生产日期计算到期日。
+
+将 JSON 保存到 `$PROJECT_ROOT/input/` 目录：
+```bash
+# JSON 文件路径
+JSON_PATH="$PROJECT_ROOT/input/$(basename "$PDF_PATH" .pdf).json"
+```
+
+#### 3A.5 运行 JSON 驱动填充
+
+```bash
+cd "$PROJECT_ROOT/converter" && python3 fill_template.py "$JSON_PATH" "$TEMPLATE_PATH" "$OUTPUT_PATH"
+```
+
+#### 3A.6 验证填充结果
+
+运行读取脚本检查输出文件内容：
+```bash
+python3 "$PROJECT_ROOT/converter/read_output.py" "$OUTPUT_PATH"
+```
+
+对照 3A.2 中 AI 视觉读取的 PDF 原始数据，逐项检查：
+1. 所有头部字段是否正确填入
+2. 所有检测项的 Specification、Result、Method 是否与 PDF 一致
+3. 行排列是否合理（映射项在模板原位，额外项按逻辑分组插入）
+
+如果 `fill_template.py` 的额外行插入导致行错位或数据丢失，**直接用 Python + openpyxl 脚本修复输出文件**：
+```python
+import openpyxl, shutil, os
+shutil.copy2(TEMPLATE_PATH, OUTPUT_PATH)
+os.chmod(OUTPUT_PATH, 0o644)
+wb = openpyxl.load_workbook(OUTPUT_PATH)
+ws = wb.active
+# 逐单元格精确填充...
+wb.save(OUTPUT_PATH)
+```
+
+修复后重新验证，确认所有数据正确无误后继续进入 Step 4。
+
+> **注意**：Step 3A 完成后，直接跳到 Step 4 进行三方对比验证。Step 3A.2 已通过三次独立视觉读取 + 对比确认获得高可信度的 ground truth，Step 4 的 PDF 读取步骤（4.1）可复用 3A.2c 的合并结果。
+
 ### Step 3.5 Nutrition Info 网络数据补充（仅 Nutrition Info 模板执行）
 
 当检测到模板类型为 **Nutrition Info** 时，在转换完成后、验证之前，必须执行以下网络数据查询步骤。
