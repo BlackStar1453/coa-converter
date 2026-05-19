@@ -269,12 +269,15 @@ function renderJobs(jobList) {
   for (const job of jobList) {
     const status = job.status;
     const badgeClass = `badge badge-${status}`;
+    // When ai_verified === false the job finished without AI verification
+    // (e.g. running on Windows where Step 3.5 is not yet supported).
+    const skippedAI = status === 'done' && job.ai_verified === false;
     const statusLabel = {
       pending: 'Pending',
       converting: 'Converting...',
       converted: 'Unverified',
       verifying: 'AI Verifying...',
-      done: 'Verified',
+      done: skippedAI ? 'Done (Not AI-verified)' : 'Verified',
       error: 'Error',
     }[status] || status;
 

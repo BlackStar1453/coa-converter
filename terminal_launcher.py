@@ -4,13 +4,25 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import logging
 
 logger = logging.getLogger(__name__)
 
+# AI verification (Step 3.5) currently relies on macOS Terminal.app + osascript.
+# On non-darwin platforms (Windows, Linux) we silently skip this step instead of
+# erroring out, so the rest of the conversion pipeline remains usable.
+IS_AI_VERIFICATION_SUPPORTED = sys.platform == 'darwin'
+
 MARKER_DIR = '/tmp'
+
+
+def _skip_ai_verification(job_manager, job_id: str, reason: str):
+    """Mark a job as done without AI verification (used on non-macOS platforms)."""
+    logger.info(f'[AI验证] 跳过 job {job_id}: {reason}')
+    job_manager.update_job(job_id, status='done', ai_verified=False)
 
 
 def _find_claude_cli():
@@ -92,10 +104,12 @@ def _escape_for_applescript(s: str) -> str:
 def launch_verification(job_manager, job_id: str, pdf_path: str,
                         template_path: str, output_path: str):
     """Open Terminal.app running Claude Code for COA verification."""
+    if not IS_AI_VERIFICATION_SUPPORTED:
+        _skip_ai_verification(job_manager, job_id,
+                              f'平台 {sys.platform} 暂不支持交互式 AI 验证')
+        return
     if not CLAUDE_CLI:
-        logger.error('Claude CLI not found')
-        job_manager.update_job(job_id, status='error',
-                               error='Claude CLI not found. Install Claude Code CLI or disable AI verification.')
+        _skip_ai_verification(job_manager, job_id, 'Claude CLI 未安装')
         return
 
     marker_file = os.path.join(MARKER_DIR, f'coa-verify-{job_id}.done')
@@ -209,10 +223,12 @@ def _run_claude_silent(job_manager, job_id: str, prompt: str,
 def launch_verification_silent(job_manager, job_id: str, pdf_path: str,
                                template_path: str, output_path: str):
     """Run Claude Code silently with -p flag and stream output."""
+    if not IS_AI_VERIFICATION_SUPPORTED:
+        _skip_ai_verification(job_manager, job_id,
+                              f'平台 {sys.platform} 暂不支持 AI 验证')
+        return
     if not CLAUDE_CLI:
-        logger.error('Claude CLI not found')
-        job_manager.update_job(job_id, status='error',
-                               error='Claude CLI not found. Install Claude Code CLI or disable AI verification.')
+        _skip_ai_verification(job_manager, job_id, 'Claude CLI 未安装')
         return
 
     prompt = f"/coa-to-template {pdf_path} {template_path} {output_path}"
@@ -228,10 +244,12 @@ def launch_verification_silent(job_manager, job_id: str, pdf_path: str,
 def launch_error_fix(job_manager, job_id: str, pdf_path: str,
                      template_path: str, output_path: str, error_msg: str):
     """Open Terminal.app running Claude Code to fix reported errors."""
+    if not IS_AI_VERIFICATION_SUPPORTED:
+        _skip_ai_verification(job_manager, job_id,
+                              f'平台 {sys.platform} 暂不支持交互式 AI 错误修复')
+        return
     if not CLAUDE_CLI:
-        logger.error('Claude CLI not found')
-        job_manager.update_job(job_id, status='error',
-                               error='Claude CLI not found.')
+        _skip_ai_verification(job_manager, job_id, 'Claude CLI 未安装')
         return
 
     marker_file = os.path.join(MARKER_DIR, f'coa-verify-{job_id}.done')
@@ -278,10 +296,12 @@ def launch_error_fix_silent(job_manager, job_id: str, pdf_path: str,
                             template_path: str, output_path: str,
                             error_msg: str):
     """Run Claude Code silently to fix reported errors, streaming output."""
+    if not IS_AI_VERIFICATION_SUPPORTED:
+        _skip_ai_verification(job_manager, job_id,
+                              f'平台 {sys.platform} 暂不支持 AI 错误修复')
+        return
     if not CLAUDE_CLI:
-        logger.error('Claude CLI not found')
-        job_manager.update_job(job_id, status='error',
-                               error='Claude CLI not found.')
+        _skip_ai_verification(job_manager, job_id, 'Claude CLI 未安装')
         return
 
     prompt = (f"/coa-fix-output {pdf_path} {template_path} {output_path} "

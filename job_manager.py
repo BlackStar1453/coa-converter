@@ -27,6 +27,7 @@ class JobManager:
             'output_path': None,
             'error': None,
             'needs_verification': None,
+            'ai_verified': None,
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat(),
         }

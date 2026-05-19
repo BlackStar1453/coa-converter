@@ -4,6 +4,7 @@
 import json
 import os
 import logging
+import sys
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, quote
@@ -438,16 +439,44 @@ class COAHandler(SimpleHTTPRequestHandler):
     def _handle_download(self, job_id):
         job = jobs.get_job(job_id)
         if not job:
+            logger.warning(f'[下载] job {job_id} 不存在')
             self.send_error(404)
             return
         output_path = job.get('output_path')
         if not output_path or not os.path.exists(output_path):
+            logger.warning(f'[下载] job {job_id} 文件不存在: {output_path}')
             self.send_error(404)
             return
 
         filename = os.path.basename(output_path)
-        with open(output_path, 'rb') as f:
-            data = f.read()
+        try:
+            file_size = os.path.getsize(output_path)
+        except OSError as e:
+            logger.error(f'[下载] 获取文件大小失败 {output_path}: {e}')
+            self.send_error(500)
+            return
+
+        logger.info(f'[下载] job={job_id} path={output_path} size={file_size}B')
+
+        if file_size == 0:
+            # Empty file on disk — log loudly so Windows-debug users can see it
+            logger.error(f'[下载] 警告：磁盘上的文件大小为 0！job={job_id} path={output_path}')
+
+        try:
+            with open(output_path, 'rb') as f:
+                data = f.read()
+        except OSError as e:
+            # On Windows, the file may be locked by Excel/Word if user opened it
+            logger.error(f'[下载] 读取文件失败 {output_path}: {e}')
+            self.send_error(500)
+            return
+
+        actual_bytes = len(data)
+        if actual_bytes != file_size:
+            logger.warning(
+                f'[下载] 读取字节数 ({actual_bytes}) 与文件大小 ({file_size}) 不一致 '
+                f'(平台={sys.platform})')
+
         self.send_response(200)
         self.send_header('Content-Type', 'application/octet-stream')
         # RFC 6266: ASCII fallback + UTF-8 encoded filename for special chars
@@ -455,11 +484,16 @@ class COAHandler(SimpleHTTPRequestHandler):
         self.send_header('Content-Disposition',
                          f"attachment; filename=\"{ascii_name}\"; "
                          f"filename*=UTF-8''{quote(filename)}")
-        self.send_header('Content-Length', len(data))
+        self.send_header('Content-Length', str(actual_bytes))
         self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
         self.send_header('Connection', 'close')
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+            self.wfile.flush()
+            logger.info(f'[下载] job={job_id} 写入 {actual_bytes}B 完成')
+        except (BrokenPipeError, ConnectionResetError) as e:
+            logger.warning(f'[下载] 客户端断开连接 job={job_id}: {e}')
 
 
 def main():
