@@ -526,11 +526,11 @@ class TestClaudeCLIDetection(unittest.TestCase):
     def test_env_override_takes_priority(self):
         """CLAUDE_CLI_PATH env var should override auto-detection."""
         from unittest.mock import patch
-        fake = '/tmp/test-claude-fake'
-        # Create a fake executable
-        with open(fake, 'w') as f:
-            f.write('#!/bin/sh\n')
-        os.chmod(fake, 0o755)
+        # Use tempfile for cross-platform compatibility (Windows has no /tmp)
+        fd, fake = tempfile.mkstemp(prefix='test-claude-fake-')
+        os.close(fd)
+        if sys.platform != 'win32':
+            os.chmod(fake, 0o755)
         try:
             with patch.dict(os.environ, {'CLAUDE_CLI_PATH': fake}):
                 # Re-evaluate: the module-level CLAUDE_CLI is set at import time,
