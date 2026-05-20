@@ -11,10 +11,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# AI verification (Step 3.5) currently relies on macOS Terminal.app + osascript.
-# On non-darwin platforms (Windows, Linux) we silently skip this step instead of
-# erroring out, so the rest of the conversion pipeline remains usable.
-IS_AI_VERIFICATION_SUPPORTED = sys.platform == 'darwin'
+# Silent AI verification (subprocess.run claude -p) is cross-platform — both
+# macOS and Windows can use it as long as the Claude CLI is installed.
+# The interactive mode (visible Terminal window with live Claude output) still
+# requires macOS Terminal.app + osascript; on Windows we transparently fall
+# back to silent mode (see launch_verification / launch_error_fix below).
+IS_AI_VERIFICATION_SUPPORTED = sys.platform in ('darwin', 'win32')
+IS_INTERACTIVE_TERMINAL_SUPPORTED = sys.platform == 'darwin'
 
 MARKER_DIR = '/tmp'
 
@@ -29,10 +32,39 @@ def _find_claude_cli():
     """Find Claude CLI binary from known paths or PATH.
 
     Checks common installation locations for various package managers
-    (Homebrew, npm global, nvm, volta, bun, pnpm) before falling back
-    to PATH search. Also loads shell profile PATH to handle cases where
-    the web server process has a different PATH than the user's shell.
+    (Homebrew, npm global, nvm, volta, bun, pnpm; Windows native installer,
+    npm global, .local\\bin) before falling back to PATH search. Also loads
+    shell profile PATH on Unix to handle cases where the web server process
+    has a different PATH than the user's shell.
     """
+    if sys.platform == 'win32':
+        local_appdata = os.environ.get('LOCALAPPDATA', '')
+        appdata = os.environ.get('APPDATA', '')
+        user_profile = os.environ.get('USERPROFILE', '')
+        candidates = [
+            # Native installer (Claude Code for Windows)
+            os.path.join(local_appdata, 'Programs', 'claude', 'claude.exe'),
+            # npm global install
+            os.path.join(appdata, 'npm', 'claude.cmd'),
+            os.path.join(appdata, 'npm', 'claude.exe'),
+            # Direct user install
+            os.path.join(user_profile, '.local', 'bin', 'claude.exe'),
+            os.path.join(user_profile, '.claude', 'local', 'claude.exe'),
+        ]
+        # Filter empty strings (env var missing) and check existence — on
+        # Windows os.access(..., X_OK) reports True for any readable file,
+        # so we only check isfile.
+        for path in candidates:
+            if path and os.path.isfile(path):
+                return path
+        # PATH fallback: try common executable extensions
+        for name in ('claude', 'claude.exe', 'claude.cmd', 'claude.bat'):
+            found = shutil.which(name)
+            if found:
+                return found
+        return None
+
+    # Unix (macOS, Linux)
     candidates = [
         # Homebrew (Apple Silicon + Intel)
         '/opt/homebrew/bin/claude',
@@ -79,7 +111,14 @@ def _glob_expand(pattern: str) -> list:
 
 
 def _get_shell_path() -> str | None:
-    """Load PATH from the user's login shell to catch paths not in server env."""
+    """Load PATH from the user's login shell to catch paths not in server env.
+
+    Unix only: spawns a login shell and echoes $PATH. On Windows the concept
+    doesn't apply (PATH is already inherited from the process env via the
+    standard Windows API), so we return None to skip this fallback.
+    """
+    if sys.platform == 'win32':
+        return None
     try:
         shell = os.environ.get('SHELL', '/bin/zsh')
         result = subprocess.run(
@@ -103,10 +142,17 @@ def _escape_for_applescript(s: str) -> str:
 
 def launch_verification(job_manager, job_id: str, pdf_path: str,
                         template_path: str, output_path: str):
-    """Open Terminal.app running Claude Code for COA verification."""
-    if not IS_AI_VERIFICATION_SUPPORTED:
-        _skip_ai_verification(job_manager, job_id,
-                              f'平台 {sys.platform} 暂不支持交互式 AI 验证')
+    """Open Terminal.app running Claude Code for COA verification.
+
+    On Windows the visible-terminal interactive flow is not implemented yet
+    (PowerShell + .ps1 + new-console). Auto-fallback to the silent path so
+    the AI verification still happens — the user just doesn't see live output.
+    """
+    if not IS_INTERACTIVE_TERMINAL_SUPPORTED:
+        logger.info(f'[AI验证] 平台 {sys.platform} 不支持交互式终端，'
+                    f'自动降级到 silent 模式 (job {job_id})')
+        launch_verification_silent(job_manager, job_id, pdf_path,
+                                   template_path, output_path)
         return
     if not CLAUDE_CLI:
         _skip_ai_verification(job_manager, job_id, 'Claude CLI 未安装')
@@ -222,7 +268,12 @@ def _run_claude_silent(job_manager, job_id: str, prompt: str,
 
 def launch_verification_silent(job_manager, job_id: str, pdf_path: str,
                                template_path: str, output_path: str):
-    """Run Claude Code silently with -p flag and stream output."""
+    """Run Claude Code silently with -p flag and stream output.
+
+    Cross-platform: only requires Claude CLI to be installed. If not found,
+    we mark the job as done without AI verification so the rest of the
+    pipeline (download, etc.) remains usable.
+    """
     if not IS_AI_VERIFICATION_SUPPORTED:
         _skip_ai_verification(job_manager, job_id,
                               f'平台 {sys.platform} 暂不支持 AI 验证')
@@ -243,10 +294,15 @@ def launch_verification_silent(job_manager, job_id: str, pdf_path: str,
 
 def launch_error_fix(job_manager, job_id: str, pdf_path: str,
                      template_path: str, output_path: str, error_msg: str):
-    """Open Terminal.app running Claude Code to fix reported errors."""
-    if not IS_AI_VERIFICATION_SUPPORTED:
-        _skip_ai_verification(job_manager, job_id,
-                              f'平台 {sys.platform} 暂不支持交互式 AI 错误修复')
+    """Open Terminal.app running Claude Code to fix reported errors.
+
+    On Windows we fall back to the silent error-fix path (no visible terminal).
+    """
+    if not IS_INTERACTIVE_TERMINAL_SUPPORTED:
+        logger.info(f'[AI错误修复] 平台 {sys.platform} 不支持交互式终端，'
+                    f'自动降级到 silent 模式 (job {job_id})')
+        launch_error_fix_silent(job_manager, job_id, pdf_path,
+                                template_path, output_path, error_msg)
         return
     if not CLAUDE_CLI:
         _skip_ai_verification(job_manager, job_id, 'Claude CLI 未安装')

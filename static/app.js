@@ -153,8 +153,12 @@ async function checkClientInfo() {
     const res = await fetch(`${API}/api/client-info`);
     const info = await res.json();
     isLocal = info.is_local;
-    if (!isLocal) {
-      const sel = document.getElementById('claudeMode');
+    const sel = document.getElementById('claudeMode');
+    if (info.interactive_allowed === false) {
+      sel.value = 'silent';
+      sel.disabled = true;
+      sel.title = `Interactive mode requires macOS Terminal.app; ${info.platform || 'this platform'} will use silent mode.`;
+    } else if (!isLocal) {
       sel.value = 'silent';
       sel.disabled = true;
       sel.title = 'Interactive mode is only available on the local machine';

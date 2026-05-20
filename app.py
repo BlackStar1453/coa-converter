@@ -100,6 +100,12 @@ def _parse_multipart(handler) -> dict:
 
 _LOCALHOST_IPS = {'127.0.0.1', '::1'}
 
+# Interactive AI verification (visible Terminal window with live Claude output)
+# currently relies on macOS Terminal.app + osascript. On other platforms we
+# transparently force claude_mode='silent'. The silent path itself is fully
+# cross-platform (just subprocess.run claude -p).
+_INTERACTIVE_ALLOWED = sys.platform == 'darwin'
+
 
 class COAHandler(SimpleHTTPRequestHandler):
     """HTTP handler with API routes and static file serving."""
@@ -131,7 +137,11 @@ class COAHandler(SimpleHTTPRequestHandler):
             job_id = path.split('/api/jobs/')[1]
             self._handle_get_job(job_id)
         elif path == '/api/client-info':
-            _json_response(self, {'is_local': self._is_local()})
+            _json_response(self, {
+                'is_local': self._is_local(),
+                'platform': sys.platform,
+                'interactive_allowed': _INTERACTIVE_ALLOWED,
+            })
         elif path.startswith('/api/download/'):
             job_id = path.split('/api/download/')[1]
             self._handle_download(job_id)
@@ -260,7 +270,7 @@ class COAHandler(SimpleHTTPRequestHandler):
             counter += 1
 
         claude_mode = params.get('claude_mode', 'silent')
-        if not self._is_local():
+        if not self._is_local() or not _INTERACTIVE_ALLOWED:
             claude_mode = 'silent'
 
         jobs.update_job(job_id, template_name=template_name,
@@ -295,7 +305,7 @@ class COAHandler(SimpleHTTPRequestHandler):
             return
 
         claude_mode = params.get('claude_mode', 'silent')
-        if not self._is_local():
+        if not self._is_local() or not _INTERACTIVE_ALLOWED:
             claude_mode = 'silent'
 
         pending = jobs.get_pending_jobs()
@@ -357,7 +367,7 @@ class COAHandler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             params = {}
         claude_mode = params.get('claude_mode', 'silent')
-        if not self._is_local():
+        if not self._is_local() or not _INTERACTIVE_ALLOWED:
             claude_mode = 'silent'
 
         job = jobs.get_job(job_id)
@@ -398,7 +408,7 @@ class COAHandler(SimpleHTTPRequestHandler):
             return
 
         claude_mode = params.get('claude_mode', 'silent')
-        if not self._is_local():
+        if not self._is_local() or not _INTERACTIVE_ALLOWED:
             claude_mode = 'silent'
 
         jobs.update_job(job_id, status='verifying')
