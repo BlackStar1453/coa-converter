@@ -41,3 +41,6 @@ jobs:
 
       - name: Run Windows download integration test
         run: python -m unittest test_windows_download -v
+
+      - name: Run Claude CLI cross-platform tests
+        run: python -m unittest test_claude_cli_windows -v
