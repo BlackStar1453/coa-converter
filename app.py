@@ -22,6 +22,7 @@ INPUT_DIR = PROJECT_DIR / 'input'
 OUTPUT_DIR = PROJECT_DIR / 'output'
 TEMPLATES_DIR = PROJECT_DIR / 'templates'
 STATIC_DIR = PROJECT_DIR / 'static'
+SAMPLES_DIR = PROJECT_DIR / 'samples'
 
 logging.basicConfig(level=logging.INFO,
                     format='[COA-Web] %(levelname)s: %(message)s')
@@ -145,6 +146,9 @@ class COAHandler(SimpleHTTPRequestHandler):
         elif path.startswith('/api/download/'):
             job_id = path.split('/api/download/')[1]
             self._handle_download(job_id)
+        elif path.startswith('/api/sample/'):
+            sample_name = path.split('/api/sample/')[1]
+            self._handle_sample_download(sample_name)
         else:
             self.send_error(404)
 
@@ -445,6 +449,66 @@ class COAHandler(SimpleHTTPRequestHandler):
                 pass
         jobs.delete_job(job_id)
         _json_response(self, {'ok': True})
+
+    def _handle_sample_download(self, sample_name):
+        """Diagnostic endpoint: download a pre-baked sample file directly.
+
+        Bypasses the upload + convert + AI-verify pipeline so we can isolate
+        whether the HTTP download layer itself is healthy on a given client
+        (e.g. Windows browser over LAN). Uses the same byte-writing code path
+        as the real /api/download/<job_id> handler, including the same
+        diagnostic logs prefixed [下载-sample].
+
+        Allowed names are restricted to files under samples/ to prevent any
+        kind of path traversal.
+        """
+        # Normalize and validate — only allow plain filenames inside SAMPLES_DIR
+        safe_name = os.path.basename(sample_name)
+        if not safe_name or safe_name != sample_name:
+            logger.warning(f'[下载-sample] 非法 sample 名称: {sample_name!r}')
+            self.send_error(400)
+            return
+
+        sample_path = SAMPLES_DIR / safe_name
+        if not sample_path.exists() or not sample_path.is_file():
+            logger.warning(f'[下载-sample] 文件不存在: {sample_path}')
+            self.send_error(404)
+            return
+
+        try:
+            file_size = sample_path.stat().st_size
+        except OSError as e:
+            logger.error(f'[下载-sample] stat 失败 {sample_path}: {e}')
+            self.send_error(500)
+            return
+
+        logger.info(f'[下载-sample] name={safe_name} path={sample_path} size={file_size}B')
+
+        try:
+            with open(sample_path, 'rb') as f:
+                data = f.read()
+        except OSError as e:
+            logger.error(f'[下载-sample] 读取失败 {sample_path}: {e}')
+            self.send_error(500)
+            return
+
+        actual_bytes = len(data)
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/octet-stream')
+        ascii_name = safe_name.encode('ascii', 'replace').decode('ascii')
+        self.send_header('Content-Disposition',
+                         f"attachment; filename=\"{ascii_name}\"; "
+                         f"filename*=UTF-8''{quote(safe_name)}")
+        self.send_header('Content-Length', str(actual_bytes))
+        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+            self.wfile.flush()
+            logger.info(f'[下载-sample] {safe_name} 写入 {actual_bytes}B 完成')
+        except (BrokenPipeError, ConnectionResetError) as e:
+            logger.warning(f'[下载-sample] 客户端断开连接 {safe_name}: {e}')
 
     def _handle_download(self, job_id):
         job = jobs.get_job(job_id)

@@ -245,18 +245,32 @@ def _start_marker_poll(job_manager, job_id: str, marker_file: str):
 def _run_claude_silent(job_manager, job_id: str, prompt: str,
                        cwd: str, label: str = 'Silent run'):
     """Run Claude CLI in a subprocess and update job status on completion."""
+    logger.info(f'[{label}] job {job_id} 启动 claude: cli={CLAUDE_CLI} cwd={cwd}')
+    import time
+    start = time.monotonic()
     try:
         result = subprocess.run(
             [CLAUDE_CLI, '--dangerously-skip-permissions', '-p', prompt],
             cwd=cwd, stdin=subprocess.DEVNULL,
             capture_output=True, text=True, timeout=3600,
         )
+        elapsed = time.monotonic() - start
+        stdout_head = (result.stdout or '')[:300].replace('\n', ' | ')
+        stderr_head = (result.stderr or '')[:300].replace('\n', ' | ')
+        logger.info(f'[{label}] job {job_id} claude 退出: rc={result.returncode} '
+                    f'耗时={elapsed:.1f}s stdout_len={len(result.stdout or "")} '
+                    f'stderr_len={len(result.stderr or "")}')
+        if stdout_head:
+            logger.info(f'[{label}] stdout 前300字: {stdout_head}')
+        if stderr_head:
+            logger.info(f'[{label}] stderr 前300字: {stderr_head}')
         if result.returncode == 0:
             job_manager.update_job(job_id, status='done')
             logger.info(f'{label} complete for job {job_id}')
         else:
             job_manager.update_job(job_id, status='error',
-                                   error='Claude returned non-zero exit')
+                                   error=f'Claude returned non-zero exit (rc={result.returncode}): '
+                                         f'{stderr_head or stdout_head or "no output"}')
     except subprocess.TimeoutExpired:
         job_manager.update_job(job_id, status='error',
                                error='Claude timed out (1 hour)')
