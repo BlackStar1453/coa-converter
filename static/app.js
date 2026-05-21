@@ -153,8 +153,12 @@ async function checkClientInfo() {
     const res = await fetch(`${API}/api/client-info`);
     const info = await res.json();
     isLocal = info.is_local;
-    if (!isLocal) {
-      const sel = document.getElementById('claudeMode');
+    const sel = document.getElementById('claudeMode');
+    if (info.interactive_allowed === false) {
+      sel.value = 'silent';
+      sel.disabled = true;
+      sel.title = `Interactive mode requires macOS Terminal.app; ${info.platform || 'this platform'} will use silent mode.`;
+    } else if (!isLocal) {
       sel.value = 'silent';
       sel.disabled = true;
       sel.title = 'Interactive mode is only available on the local machine';
@@ -269,12 +273,15 @@ function renderJobs(jobList) {
   for (const job of jobList) {
     const status = job.status;
     const badgeClass = `badge badge-${status}`;
+    // When ai_verified === false the job finished without AI verification
+    // (e.g. running on Windows where Step 3.5 is not yet supported).
+    const skippedAI = status === 'done' && job.ai_verified === false;
     const statusLabel = {
       pending: 'Pending',
       converting: 'Converting...',
       converted: 'Unverified',
       verifying: 'AI Verifying...',
-      done: 'Verified',
+      done: skippedAI ? 'Done (Not AI-verified)' : 'Verified',
       error: 'Error',
     }[status] || status;
 

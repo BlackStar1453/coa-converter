@@ -4,6 +4,7 @@
 import json
 import os
 import logging
+import sys
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, quote
@@ -21,6 +22,7 @@ INPUT_DIR = PROJECT_DIR / 'input'
 OUTPUT_DIR = PROJECT_DIR / 'output'
 TEMPLATES_DIR = PROJECT_DIR / 'templates'
 STATIC_DIR = PROJECT_DIR / 'static'
+SAMPLES_DIR = PROJECT_DIR / 'samples'
 
 logging.basicConfig(level=logging.INFO,
                     format='[COA-Web] %(levelname)s: %(message)s')
@@ -99,6 +101,12 @@ def _parse_multipart(handler) -> dict:
 
 _LOCALHOST_IPS = {'127.0.0.1', '::1'}
 
+# Interactive AI verification (visible Terminal window with live Claude output)
+# currently relies on macOS Terminal.app + osascript. On other platforms we
+# transparently force claude_mode='silent'. The silent path itself is fully
+# cross-platform (just subprocess.run claude -p).
+_INTERACTIVE_ALLOWED = sys.platform == 'darwin'
+
 
 class COAHandler(SimpleHTTPRequestHandler):
     """HTTP handler with API routes and static file serving."""
@@ -130,10 +138,17 @@ class COAHandler(SimpleHTTPRequestHandler):
             job_id = path.split('/api/jobs/')[1]
             self._handle_get_job(job_id)
         elif path == '/api/client-info':
-            _json_response(self, {'is_local': self._is_local()})
+            _json_response(self, {
+                'is_local': self._is_local(),
+                'platform': sys.platform,
+                'interactive_allowed': _INTERACTIVE_ALLOWED,
+            })
         elif path.startswith('/api/download/'):
             job_id = path.split('/api/download/')[1]
             self._handle_download(job_id)
+        elif path.startswith('/api/sample/'):
+            sample_name = path.split('/api/sample/')[1]
+            self._handle_sample_download(sample_name)
         else:
             self.send_error(404)
 
@@ -259,7 +274,7 @@ class COAHandler(SimpleHTTPRequestHandler):
             counter += 1
 
         claude_mode = params.get('claude_mode', 'silent')
-        if not self._is_local():
+        if not self._is_local() or not _INTERACTIVE_ALLOWED:
             claude_mode = 'silent'
 
         jobs.update_job(job_id, template_name=template_name,
@@ -294,7 +309,7 @@ class COAHandler(SimpleHTTPRequestHandler):
             return
 
         claude_mode = params.get('claude_mode', 'silent')
-        if not self._is_local():
+        if not self._is_local() or not _INTERACTIVE_ALLOWED:
             claude_mode = 'silent'
 
         pending = jobs.get_pending_jobs()
@@ -356,7 +371,7 @@ class COAHandler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             params = {}
         claude_mode = params.get('claude_mode', 'silent')
-        if not self._is_local():
+        if not self._is_local() or not _INTERACTIVE_ALLOWED:
             claude_mode = 'silent'
 
         job = jobs.get_job(job_id)
@@ -397,7 +412,7 @@ class COAHandler(SimpleHTTPRequestHandler):
             return
 
         claude_mode = params.get('claude_mode', 'silent')
-        if not self._is_local():
+        if not self._is_local() or not _INTERACTIVE_ALLOWED:
             claude_mode = 'silent'
 
         jobs.update_job(job_id, status='verifying')
@@ -435,19 +450,107 @@ class COAHandler(SimpleHTTPRequestHandler):
         jobs.delete_job(job_id)
         _json_response(self, {'ok': True})
 
+    def _handle_sample_download(self, sample_name):
+        """Diagnostic endpoint: download a pre-baked sample file directly.
+
+        Bypasses the upload + convert + AI-verify pipeline so we can isolate
+        whether the HTTP download layer itself is healthy on a given client
+        (e.g. Windows browser over LAN). Uses the same byte-writing code path
+        as the real /api/download/<job_id> handler, including the same
+        diagnostic logs prefixed [下载-sample].
+
+        Allowed names are restricted to files under samples/ to prevent any
+        kind of path traversal.
+        """
+        # Normalize and validate — only allow plain filenames inside SAMPLES_DIR
+        safe_name = os.path.basename(sample_name)
+        if not safe_name or safe_name != sample_name:
+            logger.warning(f'[下载-sample] 非法 sample 名称: {sample_name!r}')
+            self.send_error(400)
+            return
+
+        sample_path = SAMPLES_DIR / safe_name
+        if not sample_path.exists() or not sample_path.is_file():
+            logger.warning(f'[下载-sample] 文件不存在: {sample_path}')
+            self.send_error(404)
+            return
+
+        try:
+            file_size = sample_path.stat().st_size
+        except OSError as e:
+            logger.error(f'[下载-sample] stat 失败 {sample_path}: {e}')
+            self.send_error(500)
+            return
+
+        logger.info(f'[下载-sample] name={safe_name} path={sample_path} size={file_size}B')
+
+        try:
+            with open(sample_path, 'rb') as f:
+                data = f.read()
+        except OSError as e:
+            logger.error(f'[下载-sample] 读取失败 {sample_path}: {e}')
+            self.send_error(500)
+            return
+
+        actual_bytes = len(data)
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/octet-stream')
+        ascii_name = safe_name.encode('ascii', 'replace').decode('ascii')
+        self.send_header('Content-Disposition',
+                         f"attachment; filename=\"{ascii_name}\"; "
+                         f"filename*=UTF-8''{quote(safe_name)}")
+        self.send_header('Content-Length', str(actual_bytes))
+        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+            self.wfile.flush()
+            logger.info(f'[下载-sample] {safe_name} 写入 {actual_bytes}B 完成')
+        except (BrokenPipeError, ConnectionResetError) as e:
+            logger.warning(f'[下载-sample] 客户端断开连接 {safe_name}: {e}')
+
     def _handle_download(self, job_id):
         job = jobs.get_job(job_id)
         if not job:
+            logger.warning(f'[下载] job {job_id} 不存在')
             self.send_error(404)
             return
         output_path = job.get('output_path')
         if not output_path or not os.path.exists(output_path):
+            logger.warning(f'[下载] job {job_id} 文件不存在: {output_path}')
             self.send_error(404)
             return
 
         filename = os.path.basename(output_path)
-        with open(output_path, 'rb') as f:
-            data = f.read()
+        try:
+            file_size = os.path.getsize(output_path)
+        except OSError as e:
+            logger.error(f'[下载] 获取文件大小失败 {output_path}: {e}')
+            self.send_error(500)
+            return
+
+        logger.info(f'[下载] job={job_id} path={output_path} size={file_size}B')
+
+        if file_size == 0:
+            # Empty file on disk — log loudly so Windows-debug users can see it
+            logger.error(f'[下载] 警告：磁盘上的文件大小为 0！job={job_id} path={output_path}')
+
+        try:
+            with open(output_path, 'rb') as f:
+                data = f.read()
+        except OSError as e:
+            # On Windows, the file may be locked by Excel/Word if user opened it
+            logger.error(f'[下载] 读取文件失败 {output_path}: {e}')
+            self.send_error(500)
+            return
+
+        actual_bytes = len(data)
+        if actual_bytes != file_size:
+            logger.warning(
+                f'[下载] 读取字节数 ({actual_bytes}) 与文件大小 ({file_size}) 不一致 '
+                f'(平台={sys.platform})')
+
         self.send_response(200)
         self.send_header('Content-Type', 'application/octet-stream')
         # RFC 6266: ASCII fallback + UTF-8 encoded filename for special chars
@@ -455,11 +558,16 @@ class COAHandler(SimpleHTTPRequestHandler):
         self.send_header('Content-Disposition',
                          f"attachment; filename=\"{ascii_name}\"; "
                          f"filename*=UTF-8''{quote(filename)}")
-        self.send_header('Content-Length', len(data))
+        self.send_header('Content-Length', str(actual_bytes))
         self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
         self.send_header('Connection', 'close')
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+            self.wfile.flush()
+            logger.info(f'[下载] job={job_id} 写入 {actual_bytes}B 完成')
+        except (BrokenPipeError, ConnectionResetError) as e:
+            logger.warning(f'[下载] 客户端断开连接 job={job_id}: {e}')
 
 
 def main():

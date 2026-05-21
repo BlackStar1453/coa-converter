@@ -34,13 +34,34 @@ bash install.sh
 
 ### 4. 启动 Web 服务
 
+**macOS / Linux**:
 ```bash
 bash run.sh
+```
+
+**Windows**（双击或在 PowerShell / cmd 中执行）:
+```bat
+run.bat
 ```
 
 终端会显示两个地址：
 - **本机访问**：`http://127.0.0.1:5050`
 - **局域网访问**：`http://<你的IP>:5050`（同一网络下的其他设备均可访问）
+
+### 在 Windows 上使用 AI 验证（Step 3.5）
+
+Windows 上 AI 验证使用 **silent 模式**（无可见终端窗口；Claude 在后台跑，结果同步回 web UI）。若要启用：
+
+1. 安装 [Claude Code](https://claude.com/claude-code)（npm 全局安装或 Windows 原生安装器均可）
+2. 确保 `claude` / `claude.exe` / `claude.cmd` 在 PATH 中，或位于以下之一：
+   - `%LOCALAPPDATA%\Programs\claude\claude.exe`
+   - `%APPDATA%\npm\claude.cmd`
+   - `%USERPROFILE%\.local\bin\claude.exe`
+3. 重新运行 `run.bat`，AI 验证会自动启动
+
+> 若未安装 Claude CLI，转换流程仍可用，只是任务列表会显示 `Done (Not AI-verified)`。
+
+**高级用法**：Windows 用户也可以直接在 Claude Code 中跑 `/coa-to-template` 这样完全不走 web UI，体验跟 macOS 上的交互式终端一致。见下方"方式二"。
 
 ## 使用方式
 
@@ -101,9 +122,11 @@ coa-converter-web/
 
 ## 环境要求
 
-- macOS / Linux（Windows 需使用 PowerShell）
-- Claude Code（仅使用 Skill 方式时需要）
-- Python 3 和 Homebrew 会在安装时自动安装（如缺失）
+- **macOS**：完整支持（含交互式 AI 验证终端窗口）
+- **Windows 10/11**：用 `run.bat` 启动；AI 验证 silent 模式（无可见终端，Claude 在后台跑）；安装 Claude CLI 后自动启用
+- **Linux**：可启动 web 服务，AI 验证暂未在 Linux 上自动启用
+- Claude Code（仅使用 AI 验证或 Skill 方式时需要）
+- Python 3 和 Homebrew 会在安装时自动安装（仅 macOS）
 
 ## 常见问题
 

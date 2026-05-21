@@ -1,0 +1,46 @@
+name: Windows CI
+
+on:
+  push:
+    branches:
+      - feat/windows-support
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Show env
+        run: |
+          python --version
+          python -c "import sys; print('platform:', sys.platform)"
+          python -c "import tempfile; print('tempdir:', tempfile.gettempdir())"
+
+      - name: Run converter unit tests
+        run: python -m unittest test_converter_units -v
+
+      - name: Run Windows download integration test
+        run: python -m unittest test_windows_download -v
+
+      - name: Run Claude CLI cross-platform tests
+        run: python -m unittest test_claude_cli_windows -v
